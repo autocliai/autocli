@@ -21,6 +21,7 @@ export interface QueryEngineConfig {
   contextManager: ContextManager
   permissionConfig?: PermissionConfig
   systemPrompt?: string
+  memoryPrompt?: string
   onText?: (text: string) => void
   onToolUse?: (name: string, input: Record<string, unknown>) => void
   onToolResult?: (name: string, result: ToolResult) => void
@@ -47,6 +48,7 @@ export class QueryEngine {
       `Platform: ${process.platform}`,
       `Date: ${new Date().toISOString().split('T')[0]}`,
       this.config.systemPrompt || '',
+      this.config.memoryPrompt || '',
     ].filter(Boolean).join('\n')
   }
 

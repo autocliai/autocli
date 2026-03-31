@@ -71,6 +71,7 @@ export async function startRepl(options: {
       rules: [],
       alwaysAllow: new Set(),
     },
+    memoryPrompt: memoryManager.loadForPrompt(),
   })
   globalEngine = engine
 

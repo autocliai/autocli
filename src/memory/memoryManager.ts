@@ -72,6 +72,24 @@ export class MemoryManager {
     return readFileSync(this.indexPath, 'utf-8')
   }
 
+  loadForPrompt(): string {
+    const index = this.getIndex()
+    if (!index.trim()) return ''
+
+    const lines = index.split('\n')
+    const capped = lines.length > 200 ? lines.slice(0, 200) : lines
+    const truncated = lines.length > 200 ? '\n(... truncated, more memories available)' : ''
+
+    return [
+      '# Auto Memory',
+      '',
+      'Your persistent memory is stored in `' + this.dir + '`.',
+      'The following is your MEMORY.md index:',
+      '',
+      capped.join('\n') + truncated,
+    ].join('\n')
+  }
+
   private listFiles(): string[] {
     if (!existsSync(this.dir)) return []
     return readdirSync(this.dir)
