@@ -39,14 +39,14 @@ export async function startRepl(options: {
   const workingDir = options.workingDir || process.cwd()
 
   // Initialize subsystems
+  const skillLoader = new SkillLoader([join(platform.configDir, 'skills')])
   const toolRegistry = new ToolRegistry()
-  registerAllTools(toolRegistry)
+  registerAllTools(toolRegistry, skillLoader)
 
   const tokenCounter = new TokenCounter(config.model)
   const contextManager = new ContextManager()
   const sessionStore = new SessionStore(join(platform.configDir, 'sessions'))
   const memoryManager = new MemoryManager(join(platform.configDir, 'memory'))
-  const skillLoader = new SkillLoader([join(platform.configDir, 'skills')])
   const hookRunner = new HookRunner(config.hooks.map(h => ({
     event: h.event as HookEvent,
     command: h.command,
@@ -60,6 +60,12 @@ export async function startRepl(options: {
   commandRegistry.register(commitCommand)
   commandRegistry.register(compactCommand)
 
+  const skillsList = skillLoader.list()
+  const skillsPrompt = skillsList.length > 0
+    ? '# Available Skills\n\nUse the Skill tool to invoke:\n' +
+      skillsList.map(s => `- ${s.name}: ${s.description}`).join('\n')
+    : ''
+
   const engine = new QueryEngine({
     apiKey,
     model: config.model,
@@ -72,6 +78,7 @@ export async function startRepl(options: {
       alwaysAllow: new Set(),
     },
     memoryPrompt: memoryManager.loadForPrompt(),
+    skillsPrompt,
   })
   globalEngine = engine
 

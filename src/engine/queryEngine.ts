@@ -22,6 +22,7 @@ export interface QueryEngineConfig {
   permissionConfig?: PermissionConfig
   systemPrompt?: string
   memoryPrompt?: string
+  skillsPrompt?: string
   onText?: (text: string) => void
   onToolUse?: (name: string, input: Record<string, unknown>) => void
   onToolResult?: (name: string, result: ToolResult) => void
@@ -49,6 +50,7 @@ export class QueryEngine {
       `Date: ${new Date().toISOString().split('T')[0]}`,
       this.config.systemPrompt || '',
       this.config.memoryPrompt || '',
+      this.config.skillsPrompt || '',
     ].filter(Boolean).join('\n')
   }
 
