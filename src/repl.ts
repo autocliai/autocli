@@ -19,11 +19,14 @@ import { costCommand } from './commands/cost.js'
 import { diffCommand } from './commands/diff.js'
 import { commitCommand } from './commands/commit.js'
 import { compactCommand } from './commands/compact.js'
+import { clearCommand } from './commands/clear.js'
+import { sessionsCommand } from './commands/sessions.js'
 import type { Message, CommandResult } from './commands/types.js'
 import type { HookEvent } from './hooks/types.js'
 import { join } from 'path'
 import { loadClaudeMdFiles } from './memory/claudeMd.js'
 import { runMemoryExtraction } from './memory/autoExtract.js'
+import { buildGitContext } from './git/gitContext.js'
 
 let globalEngine: QueryEngine | null = null
 export function getGlobalEngine(): QueryEngine | null {
@@ -41,10 +44,20 @@ export function getBackgroundManager(): BackgroundAgentManager | null {
 export async function startRepl(options: {
   resume?: string
   workingDir?: string
+  model?: string
 }): Promise<void> {
   const config = loadConfig()
   const apiKey = getApiKey()
   const workingDir = options.workingDir || process.cwd()
+
+  const MODEL_MAP: Record<string, string> = {
+    'sonnet': 'claude-sonnet-4-20250514',
+    'opus': 'claude-opus-4-20250514',
+    'haiku': 'claude-haiku-3-5-20241022',
+  }
+  const resolvedModel = options.model
+    ? MODEL_MAP[options.model] || options.model
+    : config.model
 
   // Initialize subsystems
   const skillLoader = new SkillLoader([join(platform.configDir, 'skills')])
@@ -52,7 +65,7 @@ export async function startRepl(options: {
   const toolRegistry = new ToolRegistry()
   registerAllTools(toolRegistry, skillLoader, taskStore)
 
-  const tokenCounter = new TokenCounter(config.model)
+  const tokenCounter = new TokenCounter(resolvedModel)
   const contextManager = new ContextManager()
   const sessionStore = new SessionStore(join(platform.configDir, 'sessions'))
   const memoryManager = new MemoryManager(join(platform.configDir, 'memory'))
@@ -68,6 +81,8 @@ export async function startRepl(options: {
   commandRegistry.register(diffCommand)
   commandRegistry.register(commitCommand)
   commandRegistry.register(compactCommand)
+  commandRegistry.register(clearCommand)
+  commandRegistry.register(sessionsCommand)
 
   const skillsList = skillLoader.list()
   const skillsPrompt = skillsList.length > 0
@@ -75,9 +90,11 @@ export async function startRepl(options: {
       skillsList.map(s => `- ${s.name}: ${s.description}`).join('\n')
     : ''
 
+  const gitContext = await buildGitContext(workingDir)
+
   const engine = new QueryEngine({
     apiKey,
-    model: config.model,
+    model: resolvedModel,
     toolRegistry,
     tokenCounter,
     contextManager,
@@ -89,6 +106,7 @@ export async function startRepl(options: {
     memoryPrompt: memoryManager.loadForPrompt(),
     skillsPrompt,
     claudeMdPrompt: loadClaudeMdFiles(workingDir),
+    gitContext,
   })
   globalEngine = engine
   backgroundManager = new BackgroundAgentManager()
@@ -145,7 +163,7 @@ export async function startRepl(options: {
 
   // Status line
   const statusLine = new StatusLine()
-  statusLine.set('model', config.model.split('-').slice(0, 2).join(' '))
+  statusLine.set('model', resolvedModel.split('-').slice(0, 2).join(' '))
   statusLine.set('tokens', '0↑ 0↓')
   statusLine.set('cost', '$0.0000')
 
@@ -201,6 +219,10 @@ export async function startRepl(options: {
       } else if (result.type === 'compact') {
         messages = contextManager.fitToContext(messages)
         console.log(theme.success(`Context compacted to ${messages.length} messages`))
+        continue
+      } else if (result.type === 'clear') {
+        messages = []
+        console.log(theme.success('Conversation cleared.'))
         continue
       } else {
         console.log(result.text)
