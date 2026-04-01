@@ -56,7 +56,7 @@ export async function startHeadless(port: number): Promise<void> {
   console.log(theme.bold('autocli — Headless Mode'))
   console.log(theme.dim(`Port: ${port}`))
   console.log(theme.dim(`Secret: ${secret}`))
-  console.log(theme.dim('Endpoints: /health, /status, /chat, /chat/stream, /sessions, /approvals'))
+  console.log(theme.dim('Endpoints: /health, /status, /chat, /chat/stream, /sessions, /approvals, /ws'))
   console.log()
   console.log(theme.info('Waiting for connections...'))
 }

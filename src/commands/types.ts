@@ -12,6 +12,8 @@ export type CommandResult =
   | { type: 'team_status' }
   | { type: 'run_team'; team: string; workingDir: string }
   | { type: 'team_save'; saveName: string }
+  | { type: 'full_status' }
+  | { type: 'rc_start'; serverUrl: string }
 
 export interface CommandDefinition {
   name: string

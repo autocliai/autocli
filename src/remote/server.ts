@@ -5,6 +5,7 @@ import { QueryEngine, type QueryEngineConfig } from '../engine/queryEngine.js'
 import type { Message } from '../commands/types.js'
 import { theme } from '../ui/theme.js'
 import type { OpenAIMessage } from '../providers/openai.js'
+import { WsHandler } from './wsHandler.js'
 
 interface RemoteSession {
   id: string
@@ -20,6 +21,7 @@ export class RemoteServer {
   private engine: QueryEngine
   private engineConfig: QueryEngineConfig
   private tokenCounter: TokenCounter
+  private wsHandler: WsHandler
   private pendingApprovals = new Map<string, {
     resolve: (approved: boolean) => void
     toolName: string
@@ -37,6 +39,7 @@ export class RemoteServer {
     this.engineConfig = engineConfig
     this.tokenCounter = tokenCounter
     this.auth = new RemoteAuth(secret, apiKey)
+    this.wsHandler = new WsHandler(this.auth, this.engineConfig)
   }
 
   start(port: number): void {
@@ -44,8 +47,17 @@ export class RemoteServer {
 
     this.server = Bun.serve({
       port,
-      async fetch(req) {
+      async fetch(req, server) {
         const url = new URL(req.url)
+
+        // WebSocket upgrade
+        if (url.pathname === '/ws') {
+          const upgraded = server.upgrade(req, { data: {} })
+          if (!upgraded) {
+            return new Response('WebSocket upgrade failed', { status: 400 })
+          }
+          return undefined as unknown as Response
+        }
 
         // Auth check (skip for health)
         if (url.pathname !== '/health') {
@@ -224,6 +236,11 @@ export class RemoteServer {
           default:
             return new Response('Not found', { status: 404 })
         }
+      },
+      websocket: {
+        open(ws) { self.wsHandler.onOpen(ws) },
+        message(ws, message) { self.wsHandler.onMessage(ws, message) },
+        close(ws) { self.wsHandler.onClose(ws) },
       },
     })
 

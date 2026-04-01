@@ -48,11 +48,13 @@ import { vimCommand } from './commands/vim.js'
 import { brainCommand } from './commands/brain.js'
 import { searchCommand } from './commands/search.js'
 import { agentsCommand } from './commands/agents.js'
+import { rcCommand } from './commands/rc.js'
 import { statusCommand } from './commands/status.js'
 import { ScheduleStore } from './scheduler/scheduleStore.js'
 import { Scheduler } from './scheduler/scheduler.js'
 import { AgentStore } from './agents/agentStore.js'
 import { scheduleCommand } from './commands/schedule.js'
+import { deployCommand } from './commands/deploy.js'
 import { BrainReader } from './brain/reader.js'
 import { InputHistory } from './ui/history.js'
 import { checkForUpdate, showUpdateNotice } from './utils/updater.js'
@@ -133,6 +135,8 @@ export async function startRepl(options: {
   commandRegistry.register(agentsCommand)
   commandRegistry.register(scheduleCommand)
   commandRegistry.register(statusCommand)
+  commandRegistry.register(deployCommand)
+  commandRegistry.register(rcCommand)
 
   const brainReader = new BrainReader(join(platform.configDir, 'brain'))
 
@@ -282,31 +286,35 @@ export async function startRepl(options: {
   const agentStore = new AgentStore()
   const scheduleStore = new ScheduleStore()
   const scheduler = new Scheduler(scheduleStore, agentStore, async (template, wd) => {
-    const workers = template.agents.map(a => {
-      const def = agentStore.loadAgent(a.agentName)
-      return { name: a.agentName, task: a.task, agentType: def?.agentType || 'general-purpose', model: def?.model }
-    })
-    const team = teamManager.createTeam(template.name, template.goal, workers)
-    layout.log(theme.info(`[Scheduler] Team "${template.name}" started (${team.workers.length} workers)`))
+    try {
+      const workers = template.agents.map(a => {
+        const def = agentStore.loadAgent(a.agentName)
+        return { name: a.agentName, task: a.task, agentType: def?.agentType || 'general-purpose', model: def?.model }
+      })
+      const team = teamManager.createTeam(template.name, template.goal, workers)
+      layout.log(theme.info(`[Scheduler] Team "${template.name}" started (${team.workers.length} workers)`))
 
-    for (const worker of team.workers) {
-      teamManager.startWorker(team.id, worker.id)
-      const def = agentStore.loadAgent(worker.name)
-      const sysPrompt = def ? agentStore.buildSystemPrompt(def) : undefined
-      ;(async () => {
-        try {
-          const { runSubAgent } = await import('./engine/queryEngine.js')
-          const result = await runSubAgent(
-            `${sysPrompt ? sysPrompt + '\n\n' : ''}Task: ${worker.task}`,
-            worker.name,
-            { workingDir: wd, sharedState: {} },
-            { subagentType: worker.agentType, model: worker.model },
-          )
-          teamManager.completeWorker(team.id, worker.id, result)
-        } catch (err) {
-          teamManager.failWorker(team.id, worker.id, (err as Error).message)
-        }
-      })()
+      for (const worker of team.workers) {
+        teamManager.startWorker(team.id, worker.id)
+        const def = agentStore.loadAgent(worker.name)
+        const sysPrompt = def ? agentStore.buildSystemPrompt(def) : undefined
+        ;(async () => {
+          try {
+            const { runSubAgent } = await import('./engine/queryEngine.js')
+            const result = await runSubAgent(
+              `${sysPrompt ? sysPrompt + '\n\n' : ''}Task: ${worker.task}`,
+              worker.name,
+              { workingDir: wd, sharedState: {} },
+              { subagentType: worker.agentType, model: worker.model },
+            )
+            teamManager.completeWorker(team.id, worker.id, result)
+          } catch (err) {
+            teamManager.failWorker(team.id, worker.id, (err as Error).message)
+          }
+        })()
+      }
+    } catch (err) {
+      layout.log(theme.error(`[Scheduler] Failed to start team "${template.name}": ${(err as Error).message}`))
     }
   })
 
@@ -563,6 +571,49 @@ export async function startRepl(options: {
           messages.push({ role: 'user', content: teamPrompt })
         }
         continue
+      } else if (result.type === 'rc_start') {
+        // Start remote control session with eclaw-router
+        try {
+          const { RCClient } = await import('./remote/rcClient.js')
+          const rcApiKey = process.env.ECLAW_API_KEY || config.apiKey || ''
+          const rc = new RCClient({ serverUrl: result.serverUrl, apiKey: rcApiKey })
+          await rc.start()
+
+          // Connect wire events to browser
+          rc.connectWire(wire)
+
+          // Poll for browser input in background
+          ;(async () => {
+            for await (const item of rc.pollInput()) {
+              if (item.type === 'input' && item.message) {
+                // Inject browser message as user input
+                messages.push({ role: 'user', content: item.message })
+                layout.log(theme.info(`[RC] ${item.message}`))
+                // Signal the engine to process this
+                rc.pushEvent('agent_start', {})
+                try {
+                  const { response, messages: updated } = await engine.run(messages, workingDir)
+                  messages = updated
+                  const text = typeof response.content === 'string'
+                    ? response.content
+                    : response.content.filter((b): b is { type: 'text'; text: string } => b.type === 'text').map(b => b.text).join('\n')
+                  layout.log(text)
+                  rc.pushEvent('agent_done', {})
+                } catch (err) {
+                  rc.pushEvent('error', { message: (err as Error).message })
+                  rc.pushEvent('agent_done', {})
+                }
+              } else if (item.type === 'approval_response' && typeof item.approved === 'boolean') {
+                // Handle approval from browser — logged for awareness
+                layout.log(theme.dim(`[RC] Approval: ${item.approved ? 'approved' : 'denied'}`))
+              }
+            }
+            layout.log(theme.dim('Remote control session ended.'))
+          })()
+        } catch (err) {
+          layout.log(theme.error(`Failed to start RC: ${(err as Error).message}`))
+        }
+        continue
       } else {
         layout.log(result.text)
         continue
@@ -572,8 +623,9 @@ export async function startRepl(options: {
       layout.log(theme.dim(`  ${new Date().toLocaleTimeString()}`))
     }
 
-    // Track message count before this turn so we can roll back on error
-    const messageCountBeforeTurn = messages.length - 1 // -1 for the user input we just pushed
+    // Track message count before this turn so we can roll back the entire turn on error
+    // (includes the user input we just pushed + any notification messages added below)
+    const messageCountBeforeTurn = messages.length - 1
 
     // Check for background agent completions
     const bgNotifs = backgroundManager?.getPendingNotifications() || []
@@ -649,7 +701,7 @@ export async function startRepl(options: {
         layout.log(theme.dim('  ─── context compacted above this line ───'))
       }
     } catch (err) {
-      // Remove all messages we added this turn (user input + notifications)
+      // Roll back entire turn on error (user input + notifications)
       messages.length = messageCountBeforeTurn
       if ((err as Error).name !== 'AbortError' && !currentAbortController?.signal.aborted) {
         layout.log(formatError((err as Error).message))
