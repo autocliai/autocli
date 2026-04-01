@@ -38,7 +38,8 @@ export interface LayoutMetrics {
   scrollBottom: number
   statusRow: number
   separatorRow: number
-  inputRow: number
+  inputRow: number       // first row of the input area
+  inputLines: number     // number of lines the input area occupies
 }
 
 export class FullscreenLayout {
@@ -50,6 +51,8 @@ export class FullscreenLayout {
   private spinnerRunning = false
   private entered = false
   private scrollCursorRow = 1
+  private scrollCursorCol = 1
+  private currentInputLines = 1
 
   constructor() {
     this.metrics = this.computeMetrics()
@@ -58,14 +61,16 @@ export class FullscreenLayout {
   private computeMetrics(): LayoutMetrics {
     const rows = process.stdout.rows || 24
     const cols = process.stdout.columns || 80
+    const n = this.currentInputLines
     return {
       rows,
       cols,
       scrollTop: 1,
-      scrollBottom: rows - 3,
-      statusRow: rows - 2,
-      separatorRow: rows - 1,
-      inputRow: rows,
+      scrollBottom: rows - 2 - n,       // shrinks as input grows
+      statusRow: rows - 1 - n,
+      separatorRow: rows - n,
+      inputRow: rows - n + 1,            // first input row
+      inputLines: n,
     }
   }
 
@@ -91,6 +96,7 @@ export class FullscreenLayout {
     // Position cursor in the scroll region
     out.write(moveTo(scrollTop, 1))
     this.scrollCursorRow = scrollTop
+    this.scrollCursorCol = 1
 
     // Handle terminal resize
     out.on('resize', this.onResize)
@@ -125,8 +131,10 @@ export class FullscreenLayout {
 
     // Return cursor to scroll region
     const newRow = Math.min(this.scrollCursorRow, scrollBottom)
-    process.stdout.write(moveTo(newRow, 1))
+    const newCol = Math.min(this.scrollCursorCol, this.metrics.cols)
+    process.stdout.write(moveTo(newRow, newCol))
     this.scrollCursorRow = newRow
+    this.scrollCursorCol = newCol
   }
 
   // ── Scroll Region (output area) ───────────────────────────────────
@@ -139,20 +147,44 @@ export class FullscreenLayout {
     }
 
     const out = process.stdout
-    // Save cursor, ensure we're in scroll region
     out.write(saveCursor)
     out.write(setScrollRegion(this.metrics.scrollTop, this.metrics.scrollBottom))
-
-    // Move to current scroll cursor position
-    out.write(moveTo(this.scrollCursorRow, 1))
+    out.write(moveTo(this.scrollCursorRow, this.scrollCursorCol))
     out.write(text)
 
-    // Track approximate row position (count newlines)
-    const newlines = (text.match(/\n/g) || []).length
-    this.scrollCursorRow = Math.min(
-      this.scrollCursorRow + newlines,
-      this.metrics.scrollBottom,
-    )
+    // Track cursor position through the written text
+    const { cols, scrollBottom } = this.metrics
+    let row = this.scrollCursorRow
+    let col = this.scrollCursorCol
+
+    for (let i = 0; i < text.length; i++) {
+      const code = text.charCodeAt(i)
+      if (code === 0x1b) {
+        // Skip ANSI escape sequences (don't move visible cursor)
+        if (i + 1 < text.length && text.charCodeAt(i + 1) === 0x5b) {
+          i += 2
+          while (i < text.length && text.charCodeAt(i) < 0x40) i++
+          continue
+        }
+        i++ // ESC + single char
+        continue
+      }
+      if (code === 0x0a) { // \n
+        row = Math.min(row + 1, scrollBottom)
+        col = 1
+      } else if (code === 0x0d) { // \r
+        col = 1
+      } else {
+        col++
+        if (col > cols) {
+          row = Math.min(row + 1, scrollBottom)
+          col = 1
+        }
+      }
+    }
+
+    this.scrollCursorRow = row
+    this.scrollCursorCol = col
 
     out.write(restoreCursor)
   }
@@ -194,9 +226,10 @@ export class FullscreenLayout {
     out.write(clearLine)
 
     if (this.spinnerRunning) {
-      // Animated spinner + message + status fields on the right
+      // Animated spinner + message + elapsed time + status fields on the right
       const frame = theme.info(SPINNER_FRAMES[this.spinnerFrame % SPINNER_FRAMES.length])
-      const left = ` ${frame} ${this.spinnerMessage}`
+      const elapsed = this.formatElapsed(Date.now() - this.spinnerStartTime)
+      const left = ` ${frame} ${this.spinnerMessage} ${theme.dim(elapsed)}`
       const right = this.buildStatusString()
       const gap = Math.max(1, cols - stripAnsi(left).length - stripAnsi(right).length - 1)
       out.write(left + ' '.repeat(gap) + right)
@@ -219,10 +252,13 @@ export class FullscreenLayout {
 
   // ── Spinner (integrated into status bar) ──────────────────────────
 
+  private spinnerStartTime = 0
+
   startSpinner(message: string): void {
     this.spinnerMessage = message
     this.spinnerFrame = 0
     this.spinnerRunning = true
+    this.spinnerStartTime = Date.now()
 
     if (!this.entered) {
       // Fallback: inline spinner when not in fullscreen
@@ -269,6 +305,14 @@ export class FullscreenLayout {
     }
   }
 
+  private formatElapsed(ms: number): string {
+    const secs = Math.floor(ms / 1000)
+    if (secs < 60) return `${secs}s`
+    const mins = Math.floor(secs / 60)
+    const remSecs = secs % 60
+    return `${mins}m${remSecs.toString().padStart(2, '0')}s`
+  }
+
   // ── Separator ─────────────────────────────────────────────────────
 
   private renderSeparator(): void {
@@ -282,25 +326,55 @@ export class FullscreenLayout {
     out.write(restoreCursor)
   }
 
-  // ── Input line ────────────────────────────────────────────────────
+  // ── Input area ─────────────────────────────────────────────────────
 
-  /** Prepare the input row: clear it and position cursor there */
+  /**
+   * Resize the input area to `lines` rows. Redraws chrome and adjusts
+   * the scroll region so the output area shrinks to make room.
+   */
+  setInputHeight(lines: number): void {
+    if (!this.entered) return
+    const clamped = Math.max(1, Math.min(lines, Math.floor((this.metrics.rows - 3) / 2)))
+    if (clamped === this.currentInputLines) return
+    this.currentInputLines = clamped
+    this.metrics = this.computeMetrics()
+    const { scrollTop, scrollBottom, inputRow, inputLines } = this.metrics
+
+    const out = process.stdout
+    out.write(setScrollRegion(scrollTop, scrollBottom))
+    this.renderSeparator()
+    this.renderStatusBar()
+
+    // Clamp scroll cursor
+    const newRow = Math.min(this.scrollCursorRow, scrollBottom)
+    this.scrollCursorRow = newRow
+
+    // Reposition cursor to the last input row so readline writes stay at the bottom
+    out.write(moveTo(inputRow + inputLines - 1, 1))
+  }
+
+  /** Prepare the input area: clear all input rows and position cursor at the first */
   prepareInputRow(): void {
     if (!this.entered) return
-    const { inputRow } = this.metrics
+    const { inputRow, inputLines } = this.metrics
     const out = process.stdout
+    for (let r = inputRow; r < inputRow + inputLines; r++) {
+      out.write(moveTo(r, 1))
+      out.write(clearLine)
+    }
     out.write(moveTo(inputRow, 1))
-    out.write(clearLine)
     out.write(showCursor)
   }
 
-  /** Clear the input row and return cursor to scroll region */
+  /** Clear all input rows */
   clearInputRow(): void {
     if (!this.entered) return
-    const { inputRow } = this.metrics
+    const { inputRow, inputLines } = this.metrics
     const out = process.stdout
-    out.write(moveTo(inputRow, 1))
-    out.write(clearLine)
+    for (let r = inputRow; r < inputRow + inputLines; r++) {
+      out.write(moveTo(r, 1))
+      out.write(clearLine)
+    }
   }
 
   // ── Accessors ─────────────────────────────────────────────────────

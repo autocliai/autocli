@@ -86,10 +86,45 @@ export const bashTool: ToolDefinition = {
         setTimeout(() => { try { proc.kill('SIGKILL') } catch {} }, 500)
       }, timeout)
 
-      const [stdout, stderr] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-      ])
+      // Stream stdout incrementally so users see progress
+      let stdout = ''
+      let stderr = ''
+      const stdoutReader = (async () => {
+        const reader = proc.stdout.getReader()
+        const decoder = new TextDecoder()
+        let lineBuf = ''
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          const chunk = decoder.decode(value, { stream: true })
+          stdout += chunk
+          // Stream complete lines via onProgress
+          if (context.onProgress) {
+            lineBuf += chunk
+            const lines = lineBuf.split('\n')
+            lineBuf = lines.pop() || ''
+            for (const line of lines) {
+              if (line && !line.includes(cwdMarker)) {
+                context.onProgress(line)
+              }
+            }
+          }
+        }
+        // Flush remaining partial line
+        if (context.onProgress && lineBuf && !lineBuf.includes(cwdMarker)) {
+          context.onProgress(lineBuf)
+        }
+      })()
+      const stderrReader = (async () => {
+        const reader = proc.stderr.getReader()
+        const decoder = new TextDecoder()
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          stderr += decoder.decode(value, { stream: true })
+        }
+      })()
+      await Promise.all([stdoutReader, stderrReader])
 
       clearTimeout(timer)
       const exitCode = await proc.exited

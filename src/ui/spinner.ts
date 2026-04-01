@@ -8,15 +8,25 @@ export class Spinner {
   isRunning = false
   private frameIndex = 0
   private timer: ReturnType<typeof setInterval> | null = null
+  private startTime = 0
 
   constructor(message: string) {
     this.message = message
+  }
+
+  private formatElapsed(ms: number): string {
+    const secs = Math.floor(ms / 1000)
+    if (secs < 60) return `${secs}s`
+    const mins = Math.floor(secs / 60)
+    const remSecs = secs % 60
+    return `${mins}m${remSecs.toString().padStart(2, '0')}s`
   }
 
   start(): void {
     if (this.isRunning) return
     this.isRunning = true
     this.frameIndex = 0
+    this.startTime = Date.now()
 
     const layout = getLayout()
     if (layout.isEntered()) {
@@ -25,7 +35,8 @@ export class Spinner {
       process.stdout.write('\x1B[?25l') // hide cursor
       this.timer = setInterval(() => {
         const frame = theme.info(FRAMES[this.frameIndex % FRAMES.length])
-        process.stdout.write(`\r${frame} ${this.message}`)
+        const elapsed = theme.dim(this.formatElapsed(Date.now() - this.startTime))
+        process.stdout.write(`\r\x1B[K${frame} ${this.message} ${elapsed}`)
         this.frameIndex++
       }, 80)
     }

@@ -18,6 +18,17 @@ export function isVimMode(): boolean {
   return vimModeEnabled
 }
 
+/** Strip ANSI escape codes for width calculation */
+function stripAnsi(str: string): string {
+  return str.replace(/\x1B\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1B[78]/g, '')
+}
+
+/** Calculate how many visual terminal rows a line occupies */
+function visualRows(textLen: number, prefixWidth: number, cols: number): number {
+  const total = prefixWidth + textLen
+  return total <= cols ? 1 : Math.ceil(total / cols)
+}
+
 export async function readInput(prompt = '> ', history?: string[], commands?: string[]): Promise<string> {
   const layout = getLayout()
 
@@ -47,25 +58,76 @@ export async function readInput(prompt = '> ', history?: string[], commands?: st
     } : undefined,
   })
 
+  const promptWidth = stripAnsi(prompt).length
+  const contWidth = stripAnsi(theme.dim('... ')).length
+
   return new Promise((resolve) => {
     const lines: string[] = []
     let resolved = false
     let vimKeypressHandler: ((_ch: string, key: { name: string; sequence: string }) => void) | null = null
+    let wrapKeypressHandler: (() => void) | null = null
+
+    /** Recalculate the total visual rows needed for all input lines + current editing line */
+    const recalcInputHeight = () => {
+      if (!layout.isEntered()) return
+      const cols = layout.getMetrics().cols
+      let totalRows = 0
+      // Committed continuation lines
+      for (let i = 0; i < lines.length; i++) {
+        const pw = i === 0 ? promptWidth : contWidth
+        totalRows += visualRows(lines[i].length, pw, cols)
+      }
+      // Current line being edited
+      const curPw = lines.length === 0 ? promptWidth : contWidth
+      const curLineLen = (rl.line || '').length
+      totalRows += visualRows(curLineLen, curPw, cols)
+      layout.setInputHeight(Math.max(1, totalRows))
+    }
+
+    /** Redraw committed continuation lines in the input area after a resize */
+    const redrawCommittedLines = () => {
+      const metrics = layout.getMetrics()
+      const out = process.stdout
+      layout.prepareInputRow()
+      // Walk through committed lines, accounting for wrapped rows
+      let row = metrics.inputRow
+      const cols = metrics.cols
+      for (let i = 0; i < lines.length; i++) {
+        const pfx = i === 0 ? prompt : theme.dim('... ')
+        out.write(`\x1B[${row};1H\x1B[2K${pfx}${lines[i]}`)
+        const pw = i === 0 ? promptWidth : contWidth
+        row += visualRows(lines[i].length, pw, cols)
+      }
+      // Position cursor on the next row for the new continuation prompt
+      out.write(`\x1B[${row};1H\x1B[2K`)
+    }
 
     const finish = (result: string) => {
       if (resolved) return
       resolved = true
-      // Clean up vim keypress listener if active
+      // Clean up keypress listeners
       if (vimKeypressHandler) {
         process.stdin.removeListener('keypress', vimKeypressHandler)
         vimKeypressHandler = null
       }
+      if (wrapKeypressHandler) {
+        process.stdin.removeListener('keypress', wrapKeypressHandler)
+        wrapKeypressHandler = null
+      }
       rl.close()
-      // Clear the input row after submission
+      // Clear the input row and reset to single-line height
       if (layout.isEntered()) {
         layout.clearInputRow()
+        layout.setInputHeight(1)
       }
       resolve(result)
+    }
+
+    // Track line wrapping via keypress events in fullscreen mode
+    if (layout.isEntered() && process.stdin.isTTY) {
+      if (!vimModeEnabled) readline.emitKeypressEvents(process.stdin, rl)
+      wrapKeypressHandler = () => recalcInputHeight()
+      process.stdin.on('keypress', wrapKeypressHandler)
     }
 
     // Vim mode: intercept keys in normal mode
@@ -95,6 +157,10 @@ export async function readInput(prompt = '> ', history?: string[], commands?: st
         // Insert mode: normal line handling
         if (line.endsWith('\\')) {
           lines.push(line.slice(0, -1))
+          recalcInputHeight()
+          if (layout.isEntered()) {
+            redrawCommittedLines()
+          }
           rl.setPrompt(theme.dim('... '))
           rl.prompt()
           return
@@ -130,6 +196,11 @@ export async function readInput(prompt = '> ', history?: string[], commands?: st
       rl.on('line', (line) => {
         if (line.endsWith('\\')) {
           lines.push(line.slice(0, -1))
+          // Recalc height (accounts for wrapping of committed lines + new empty line)
+          recalcInputHeight()
+          if (layout.isEntered()) {
+            redrawCommittedLines()
+          }
           rl.setPrompt(theme.dim('... '))
           rl.prompt()
           return

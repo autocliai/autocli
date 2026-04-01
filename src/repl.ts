@@ -652,6 +652,9 @@ export async function startRepl(options: {
       messages.push({ role: 'user', content: notifText })
     }
 
+    // Show status immediately so user knows input was received
+    layout.setStatus('status', 'preparing…')
+
     // Emit wire event for user input
     wire.emit('user_input', { input })
 
@@ -662,6 +665,7 @@ export async function startRepl(options: {
     engine.setBrainContext(brainReader.buildPromptSection(input))
 
     // Query LLM
+    layout.clearStatus('status')
     const startTime = Date.now()
     const prevCost = tokenCounter.totalCost
     currentAbortController = new AbortController()

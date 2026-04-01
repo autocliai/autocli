@@ -175,14 +175,22 @@ export class QueryEngine {
     workingDir: string,
     abortSignal?: AbortSignal,
   ): Promise<{ response: Message; messages: Message[] }> {
+    const spinner = new Spinner('Thinking...')
+    if (!this.config.headless) spinner.start()
+
     const fitted = this.config.contextManager.fitToContext(messages)
     const systemPrompt = this.buildSystemPrompt(workingDir)
     const tools = this.config.toolRegistry.toApiSchemas()
     const sharedState: Record<string, unknown> = {}
     if (this.config.bgTaskManager) sharedState.bgTaskManager = this.config.bgTaskManager
-    const toolContext: ToolContext = { workingDir, sharedState }
+    const toolContext: ToolContext = {
+      workingDir,
+      sharedState,
+      onProgress: this.config.headless ? undefined : (text: string) => {
+        getLayout().log(theme.dim(text))
+      },
+    }
 
-    const spinner = new Spinner('Thinking...')
     const maxLoops = this.config.maxToolLoops || 40
     let loopCount = 0
 
@@ -232,7 +240,7 @@ export class QueryEngine {
         return { role: m.role as 'user' | 'assistant', content: blocks }
       })
 
-      if (!this.config.headless) spinner.start()
+      if (!this.config.headless && !spinner.isRunning) spinner.start()
 
       let spinnerStopped = false
       const stopSpinnerOnce = () => {
@@ -246,19 +254,20 @@ export class QueryEngine {
 
       if (this.config.provider === 'claude-local') {
         const { callClaudeLocal } = await import('../providers/claudeLocal.js')
-        stopSpinnerOnce()
 
         const localResult = await callClaudeLocal({
           system: systemPrompt,
           messages: apiMessages as Array<{ role: string; content: unknown }>,
           config: this.config.claudeLocalConfig,
           onText: (text) => {
+            stopSpinnerOnce()
             streamRenderer.write(text)
             this.config.onText?.(text)
             this.config.wire?.emit('text', { text })
           },
           abortSignal,
         })
+        stopSpinnerOnce()
 
         // Claude-local handles tools internally — wrap as text-only response
         response = {
@@ -278,7 +287,6 @@ export class QueryEngine {
         } as unknown as Anthropic.Message
       } else if (this.config.provider === 'openai' || this.config.provider === 'minimaxi-cn') {
         const { callOpenAI, buildOpenAIConfig } = await import('../providers/openai.js')
-        stopSpinnerOnce()
         const isMinimaxi = this.config.provider === 'minimaxi-cn'
         const oaiConfig = buildOpenAIConfig({
           provider: 'openai',
@@ -297,6 +305,7 @@ export class QueryEngine {
             tools: tools as Array<{ name: string; description: string; input_schema: Record<string, unknown> }>,
           })
         }, 3, !!this.config.headless)
+        stopSpinnerOnce()
 
         // Emit text for OpenAI response (apply inline markdown since we have full text)
         for (const block of oaiResult.content) {
