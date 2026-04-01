@@ -59,6 +59,7 @@ export class QueryEngine {
   async run(
     messages: Message[],
     workingDir: string,
+    abortSignal?: AbortSignal,
   ): Promise<{ response: Message; messages: Message[] }> {
     const fitted = this.config.contextManager.fitToContext(messages)
     const systemPrompt = this.buildSystemPrompt(workingDir)
@@ -75,6 +76,9 @@ export class QueryEngine {
     while (continueLoop) {
       continueLoop = false
       loopCount++
+
+      // Check for cancellation
+      if (abortSignal?.aborted) break
 
       if (loopCount > maxLoops) {
         if (!this.config.headless) {

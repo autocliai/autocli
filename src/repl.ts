@@ -93,6 +93,20 @@ export async function startRepl(options: {
   globalEngine = engine
   backgroundManager = new BackgroundAgentManager()
 
+  let currentAbortController: AbortController | null = null
+
+  // Handle Ctrl+C gracefully
+  process.on('SIGINT', () => {
+    if (currentAbortController) {
+      currentAbortController.abort()
+      currentAbortController = null
+      console.log(theme.warning('\nCancelled.'))
+    } else {
+      // If not in a query, treat as exit
+      console.log(theme.dim('\nUse /exit to quit.'))
+    }
+  })
+
   // Load or create session
   let session = options.resume
     ? sessionStore.load(options.resume) || sessionStore.getLatest()
@@ -100,8 +114,33 @@ export async function startRepl(options: {
 
   let messages: Message[] = session?.messages || []
 
-  if (session) {
+  if (session && messages.length > 0) {
     console.log(theme.dim(`Resumed session ${session.id} (${session.messages.length} messages)`))
+    console.log()
+    // Show last few messages for context
+    const historyToShow = messages.slice(-6)
+    for (const msg of historyToShow) {
+      if (typeof msg.content === 'string') {
+        if (msg.role === 'user') {
+          console.log(theme.info('You: ') + theme.dim(msg.content.slice(0, 200) + (msg.content.length > 200 ? '...' : '')))
+        } else {
+          console.log(theme.success('Claude: ') + theme.dim(msg.content.slice(0, 200) + (msg.content.length > 200 ? '...' : '')))
+        }
+      } else {
+        // ContentBlock[] — summarize
+        const textBlocks = msg.content.filter(b => b.type === 'text')
+        const toolBlocks = msg.content.filter(b => b.type === 'tool_use' || b.type === 'tool_result')
+        if (msg.role === 'assistant' && textBlocks.length > 0) {
+          const text = (textBlocks[0] as { text: string }).text
+          console.log(theme.success('Claude: ') + theme.dim(text.slice(0, 200) + (text.length > 200 ? '...' : '')))
+        }
+        if (toolBlocks.length > 0) {
+          console.log(theme.dim(`  (${toolBlocks.length} tool calls)`))
+        }
+      }
+    }
+    console.log(theme.separator())
+    console.log()
   }
 
   // Status line
@@ -185,20 +224,28 @@ export async function startRepl(options: {
     await hookRunner.run('before_response', { input })
 
     // Query LLM
+    currentAbortController = new AbortController()
     try {
-      const result = await engine.run(messages, workingDir)
+      const result = await engine.run(messages, workingDir, currentAbortController.signal)
       messages = result.messages
 
       // Update status
       statusLine.set('tokens', tokenCounter.formatUsage())
     } catch (err) {
-      // Remove the user message we just pushed since the call failed
-      // This prevents consecutive user messages which the API rejects
-      if (messages.length > 0 && messages[messages.length - 1].role === 'user') {
-        messages.pop()
+      if ((err as Error).name === 'AbortError' || currentAbortController?.signal.aborted) {
+        // User cancelled — remove the pending user message
+        if (messages.length > 0 && messages[messages.length - 1].role === 'user') {
+          messages.pop()
+        }
+      } else {
+        // Remove the user message we just pushed since the call failed
+        if (messages.length > 0 && messages[messages.length - 1].role === 'user') {
+          messages.pop()
+        }
+        console.log(theme.error(`Error: ${(err as Error).message}`))
       }
-      console.log(theme.error(`Error: ${(err as Error).message}`))
     }
+    currentAbortController = null
 
     // Run hooks
     await hookRunner.run('after_response', {})
