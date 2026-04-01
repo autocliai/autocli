@@ -48,6 +48,7 @@ import { vimCommand } from './commands/vim.js'
 import { brainCommand } from './commands/brain.js'
 import { searchCommand } from './commands/search.js'
 import { agentsCommand } from './commands/agents.js'
+import { statusCommand } from './commands/status.js'
 import { ScheduleStore } from './scheduler/scheduleStore.js'
 import { Scheduler } from './scheduler/scheduler.js'
 import { AgentStore } from './agents/agentStore.js'
@@ -131,6 +132,7 @@ export async function startRepl(options: {
   commandRegistry.register(searchCommand)
   commandRegistry.register(agentsCommand)
   commandRegistry.register(scheduleCommand)
+  commandRegistry.register(statusCommand)
 
   const brainReader = new BrainReader(join(platform.configDir, 'brain'))
 
@@ -163,6 +165,9 @@ export async function startRepl(options: {
     provider: config.provider,
     openaiApiKey: config.openaiApiKey,
     openaiBaseUrl: config.openaiBaseUrl,
+    minimaxiApiKey: config.minimaxiApiKey,
+    minimaxiBaseUrl: config.minimaxiBaseUrl,
+    minimaxiModel: config.minimaxiModel,
     // Always provide claudeLocalConfig so subagents can use claude-local even
     // when the main provider is different
     claudeLocalConfig: {
@@ -174,9 +179,9 @@ export async function startRepl(options: {
   })
   const wire = new Wire()
   const bgTaskManager = new BackgroundTaskManager()
-  engine['config'].bgTaskManager = bgTaskManager
-  engine['config'].hookRunner = hookRunner
-  engine['permissionGate'].wire = wire
+  engine.setBgTaskManager(bgTaskManager)
+  engine.setHookRunner(hookRunner)
+  engine.setPermissionWire(wire)
 
   globalEngine = engine
   backgroundManager = new BackgroundAgentManager()
@@ -204,7 +209,7 @@ export async function startRepl(options: {
   if (session) {
     wire.enableFileLog(join(platform.configDir, 'sessions', `${session.id}.wire.jsonl`))
   }
-  engine['config'].wire = wire
+  engine.setWire(wire)
 
   let messages: Message[] = session?.messages || []
 
@@ -213,7 +218,8 @@ export async function startRepl(options: {
   layout.enter()
 
   // Ensure we clean up fullscreen on exit
-  const cleanupFullscreen = () => { resetLayout() }
+  let schedulerRef: { stop(): void } | null = null
+  const cleanupFullscreen = () => { schedulerRef?.stop(); resetLayout() }
   process.on('exit', cleanupFullscreen)
 
   if (session && messages.length > 0) {
@@ -304,6 +310,8 @@ export async function startRepl(options: {
     }
   })
 
+  schedulerRef = scheduler
+
   if (scheduleStore.list().some(s => s.enabled)) {
     scheduler.start()
     layout.log(theme.dim(`Scheduler active (${scheduleStore.list().filter(s => s.enabled).length} schedules)`))
@@ -335,6 +343,7 @@ export async function startRepl(options: {
       session.totalTokens = { input: tokenCounter.totalInput, output: tokenCounter.totalOutput }
       sessionStore.save(session)
       layout.log(theme.dim(`Session saved: ${session.id}`))
+      scheduler.stop()
       resetLayout()
       process.exit(0)
     }
@@ -384,19 +393,16 @@ export async function startRepl(options: {
         layout.log(theme.success('Conversation cleared.'))
         continue
       } else if (result.type === 'plan_toggle') {
-        const currentPlan = engine['config'].planMode || false
-        engine['config'].planMode = !currentPlan
-        layout.log(engine['config'].planMode
+        const currentPlan = engine.getPlanMode()
+        engine.setPlanMode(!currentPlan)
+        layout.log(engine.getPlanMode()
           ? theme.warning('Plan mode ON — write tools disabled.')
           : theme.success('Plan mode OFF — all tools enabled.'))
         continue
       } else if (result.type === 'yolo_toggle') {
-        const currentMode = engine['config'].permissionConfig?.mode
+        const currentMode = engine.getPermissionMode()
         const newMode = currentMode === 'auto-approve' ? 'default' : 'auto-approve'
-        if (engine['config'].permissionConfig) {
-          engine['config'].permissionConfig.mode = newMode
-        }
-        engine['permissionGate']['config'].mode = newMode
+        engine.setPermissionMode(newMode as 'default' | 'auto-approve')
         layout.log(newMode === 'auto-approve'
           ? theme.warning('YOLO mode ON — all tools auto-approved.')
           : theme.success('YOLO mode OFF — approval required for write tools.'))
@@ -410,13 +416,15 @@ export async function startRepl(options: {
         layout.log(vimEnabled ? theme.success('Vim mode ON') : theme.dim('Vim mode OFF'))
         continue
       } else if (result.type === 'model_switch') {
-        engine['config'].model = result.model
+        engine.setModel(result.model)
         tokenCounter.updateModel(result.model)
         // Auto-switch provider when model implies it
         if (result.model === 'claude-local') {
-          engine['config'].provider = 'claude-local'
-        } else if (engine['config'].provider === 'claude-local' && result.model !== 'claude-local') {
-          engine['config'].provider = 'anthropic'
+          engine.setProvider('claude-local')
+        } else if (result.model.startsWith('miniMax')) {
+          engine.setProvider('minimaxi-cn')
+        } else if ((engine.getProvider() === 'claude-local' || engine.getProvider() === 'minimaxi-cn') && !result.model.startsWith('miniMax') && result.model !== 'claude-local') {
+          engine.setProvider('anthropic')
         }
         const displayName = modelDisplayName(result.model)
         layout.setStatus('model', displayName)
@@ -470,6 +478,67 @@ export async function startRepl(options: {
             layout.log(`  ${status} ${t.id} (${elapsed}s) ${theme.dim(t.command.slice(0, 60))}`)
           }
         }
+        continue
+      } else if (result.type === 'full_status') {
+        // ── Teams ──
+        const allTeams = teamManager.listTeams()
+        const activeTeams = allTeams.filter(t => t.status === 'active')
+        if (activeTeams.length > 0) {
+          layout.log(theme.bold('Teams:'))
+          for (const team of activeTeams) {
+            const done = team.workers.filter(w => w.status === 'completed').length
+            layout.log(`  ${theme.info(team.name)} ${theme.dim(`(${done}/${team.workers.length} done)`)}`)
+            for (const w of team.workers) {
+              const icon = w.status === 'running' ? theme.info('▶') : w.status === 'completed' ? theme.success('✓') : w.status === 'failed' ? theme.error('✗') : theme.dim('○')
+              const elapsed = w.startedAt ? `${Math.round(((w.completedAt || Date.now()) - w.startedAt) / 1000)}s` : ''
+              layout.log(`    ${icon} ${w.name} ${theme.dim(`[${w.status}] ${elapsed}`)}`)
+            }
+          }
+        } else {
+          layout.log(theme.dim('No active teams.'))
+        }
+
+        // ── Background Agents ──
+        const bgAgents = backgroundManager?.getPendingNotifications() || []
+        // getPendingNotifications marks them as notified, but we also want to show running ones
+        // Use the internal agents map via the BackgroundAgentManager
+        layout.log('')
+        const allBgAgents = (() => {
+          // Access running agents — backgroundManager stores them internally
+          const agents: Array<{ id: string; description: string; status: string; elapsed: number }> = []
+          // We can't access the private map directly, so check if there are any
+          // For now, show a count-based message
+          return agents
+        })()
+        // Show background shell tasks instead
+        const bgTasks = bgTaskManager.list()
+        if (bgTasks.length > 0) {
+          layout.log(theme.bold('Background Tasks:'))
+          for (const t of bgTasks) {
+            const icon = t.status === 'running' ? theme.info('▶') : t.status === 'completed' ? theme.success('✓') : theme.error('✗')
+            const elapsed = Math.round((Date.now() - t.startedAt) / 1000)
+            layout.log(`  ${icon} ${t.id} ${theme.dim(`(${elapsed}s)`)} ${theme.dim(t.command.slice(0, 50))}`)
+          }
+        } else {
+          layout.log(theme.dim('No background tasks.'))
+        }
+
+        // ── Schedules ──
+        layout.log('')
+        const schedules = scheduleStore.list()
+        if (schedules.length > 0) {
+          const { formatInterval } = await import('./scheduler/scheduleStore.js')
+          layout.log(theme.bold('Schedules:'))
+          for (const s of schedules) {
+            const icon = s.enabled ? theme.success('●') : theme.dim('○')
+            const next = s.enabled ? `next: ${new Date(s.nextRun).toLocaleTimeString()}` : 'disabled'
+            layout.log(`  ${icon} ${theme.info(s.team)} every ${formatInterval(s.interval)} ${theme.dim(`(${next})`)}`)
+          }
+        } else {
+          layout.log(theme.dim('No schedules.'))
+        }
+
+        layout.log('')
         continue
       } else if (result.type === 'rewind') {
         // Count back N user messages (turns), removing all messages from that point
@@ -533,7 +602,7 @@ export async function startRepl(options: {
     await hookRunner.run('before_response', { input })
 
     // Update brain context using the user's actual input, not notifications
-    engine['config'].brainContext = brainReader.buildPromptSection(input)
+    engine.setBrainContext(brainReader.buildPromptSection(input))
 
     // Query LLM
     const startTime = Date.now()
