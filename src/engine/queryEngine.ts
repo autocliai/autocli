@@ -155,6 +155,8 @@ export class QueryEngine {
   /** Expose config for sub-engine construction (used by buildSubEngine) */
   getConfigSnapshot(): QueryEngineConfig { return { ...this.config } }
 
+  setMaxTokens(n: number): void { this.config.maxTokens = n }
+
   buildSystemPrompt(workingDir: string): string {
     return [
       SYSTEM_PROMPT,

@@ -3,7 +3,9 @@ import { RemoteAuth } from './auth.js'
 import { QueryEngine, type QueryEngineConfig } from '../engine/queryEngine.js'
 import { TokenCounter } from '../engine/tokenCounter.js'
 import { ContextManager } from '../engine/contextManager.js'
+import { SessionStore } from '../session/sessionStore.js'
 import { resolveModel, modelDisplayName } from '../utils/config.js'
+import { logger } from '../utils/logger.js'
 import type { Message } from '../commands/types.js'
 import type { ServerMessage } from './wsProtocol.js'
 import { parseClientMessage } from './wsProtocol.js'
@@ -16,16 +18,59 @@ export interface WsSession {
   tokenCounter: TokenCounter
   authenticated: boolean
   queryInProgress: boolean
+  lastActivityAt: number
 }
+
+const SESSION_TTL_MS = 30 * 60 * 1000 // 30 minutes idle timeout
+const SESSION_CLEANUP_INTERVAL_MS = 60 * 1000 // check every minute
+const MAX_REQUESTS_PER_MINUTE = 60
 
 export class WsHandler {
   private auth: RemoteAuth
   private baseConfig: QueryEngineConfig
   private sessions = new Map<ServerWebSocket<unknown>, WsSession>()
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null
+  private rateLimitMap = new Map<ServerWebSocket<unknown>, { count: number; windowStart: number }>()
+  private sessionStore: SessionStore | null = null
 
-  constructor(auth: RemoteAuth, baseConfig: QueryEngineConfig) {
+  constructor(auth: RemoteAuth, baseConfig: QueryEngineConfig, sessionStore?: SessionStore) {
     this.auth = auth
     this.baseConfig = baseConfig
+    this.sessionStore = sessionStore || null
+
+    // Start periodic cleanup of idle sessions
+    this.cleanupTimer = setInterval(() => this.cleanupIdleSessions(), SESSION_CLEANUP_INTERVAL_MS)
+  }
+
+  /** Stop the cleanup timer (call on server shutdown) */
+  destroy(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer)
+      this.cleanupTimer = null
+    }
+  }
+
+  private cleanupIdleSessions(): void {
+    const now = Date.now()
+    for (const [ws, session] of this.sessions) {
+      if (!session.queryInProgress && (now - session.lastActivityAt) > SESSION_TTL_MS) {
+        session.abortController?.abort()
+        this.sessions.delete(ws)
+        this.rateLimitMap.delete(ws)
+        try { ws.close(4008, 'Session idle timeout') } catch { /* already closed */ }
+      }
+    }
+  }
+
+  private checkRateLimit(ws: ServerWebSocket<unknown>): boolean {
+    const now = Date.now()
+    let entry = this.rateLimitMap.get(ws)
+    if (!entry || (now - entry.windowStart) > 60_000) {
+      entry = { count: 0, windowStart: now }
+      this.rateLimitMap.set(ws, entry)
+    }
+    entry.count++
+    return entry.count <= MAX_REQUESTS_PER_MINUTE
   }
 
   onOpen(ws: ServerWebSocket<unknown>): void {
@@ -51,6 +96,15 @@ export class WsHandler {
       return
     }
 
+    // Rate limiting
+    if (msg.type !== 'ping' && !this.checkRateLimit(ws)) {
+      this.send(ws, { type: 'error', message: 'Rate limit exceeded. Max 60 requests per minute.' })
+      return
+    }
+
+    // Update activity timestamp
+    if (session) session.lastActivityAt = Date.now()
+
     switch (msg.type) {
       case 'auth':
         this.handleAuth(ws, msg.token)
@@ -73,6 +127,7 @@ export class WsHandler {
       // Abort any running query
       session.abortController?.abort()
       this.sessions.delete(ws)
+      this.rateLimitMap.delete(ws)
     }
   }
 
@@ -110,6 +165,7 @@ export class WsHandler {
       tokenCounter,
       authenticated: true,
       queryInProgress: false,
+      lastActivityAt: Date.now(),
     }
 
     this.sessions.set(ws, session)
@@ -126,9 +182,16 @@ export class WsHandler {
       return
     }
 
-    // Restore messages from a previous session ID if provided
+    // Restore messages from a previous session if provided
     if (sessionId && sessionId !== session.id) {
       session.id = sessionId
+      // Actually load messages from persisted session
+      if (this.sessionStore) {
+        const saved = this.sessionStore.load(sessionId)
+        if (saved && saved.messages.length > 0) {
+          session.messages = saved.messages
+        }
+      }
     }
 
     session.messages.push({ role: 'user', content: message })
@@ -160,6 +223,13 @@ export class WsHandler {
 
     const cwd = workingDir || process.cwd()
 
+    // Query timeout (5 minutes max)
+    const queryTimeout = setTimeout(() => {
+      if (!abortController.signal.aborted) {
+        abortController.abort()
+      }
+    }, 5 * 60 * 1000)
+
     // Run query asynchronously
     queryEngine.run(session.messages, cwd, abortController.signal)
       .then(({ messages }) => {
@@ -187,8 +257,10 @@ export class WsHandler {
         }
       })
       .finally(() => {
+        clearTimeout(queryTimeout)
         session.abortController = null
         session.queryInProgress = false
+        session.lastActivityAt = Date.now()
       })
   }
 
@@ -226,11 +298,7 @@ export class WsHandler {
 
       case 'set_max_tokens': {
         const tokens = value as number
-        // Update via config snapshot — takes effect on next query
-        session.engine.setModel(session.engine.getModel()) // no-op to ensure config is live
-        // Access config through the engine's snapshot mechanism
-        const config = session.engine.getConfigSnapshot()
-        config.maxTokens = tokens
+        session.engine.setMaxTokens(tokens)
         this.send(ws, { type: 'control_ack', action, success: true, value: tokens })
         break
       }
@@ -242,6 +310,15 @@ export class WsHandler {
   private send(ws: ServerWebSocket<unknown>, msg: ServerMessage): void {
     try {
       ws.send(JSON.stringify(msg))
-    } catch { /* connection may have closed */ }
+    } catch (err) {
+      // Connection closed — clean up session
+      logger.debug('WebSocket send failed, cleaning up session', { error: (err as Error).message })
+      if (this.sessions.has(ws)) {
+        const session = this.sessions.get(ws)
+        session?.abortController?.abort()
+        this.sessions.delete(ws)
+        this.rateLimitMap.delete(ws)
+      }
+    }
   }
 }
