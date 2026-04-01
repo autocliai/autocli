@@ -28,6 +28,7 @@ export const helpCommand: CommandDefinition = {
       '  /doctor      Diagnose environment issues',
       '  /rewind [n]  Undo last N conversation turns (alias: /undo)',
       '  /copy        Copy last assistant response to clipboard',
+      '  /vim         Toggle vim keybinding mode',
       '',
       theme.dim('Type a message to chat, or /command to run a command.'),
     ].join('\n')

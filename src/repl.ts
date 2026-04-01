@@ -42,7 +42,9 @@ import { BackgroundTaskManager } from './tasks/backgroundTask.js'
 import { tasksCommand } from './commands/tasks.js'
 import { skillsCommand } from './commands/skills.js'
 import { activateCommand } from './commands/activate.js'
+import { vimCommand } from './commands/vim.js'
 import { InputHistory } from './ui/history.js'
+import { checkForUpdate, showUpdateNotice } from './utils/updater.js'
 
 let globalEngine: QueryEngine | null = null
 export function getGlobalEngine(): QueryEngine | null {
@@ -112,6 +114,7 @@ export async function startRepl(options: {
   commandRegistry.register(doctorCommand)
   commandRegistry.register(rewindCommand)
   commandRegistry.register(copyCommand)
+  commandRegistry.register(vimCommand)
 
   const skillsList = skillLoader.list()
   const skillsPrompt = skillsList.length > 0
@@ -236,8 +239,15 @@ export async function startRepl(options: {
   console.log(`  ${theme.dim('Type')} ${theme.info('/help')} ${theme.dim('for commands')}`)
   console.log()
 
+  // Check for updates (non-blocking)
+  checkForUpdate().then(v => {
+    if (v) showUpdateNotice(v)
+  }).catch(() => {})
+
   // Input history
   const inputHistory = new InputHistory(join(platform.configDir, 'history'))
+
+  let vimEnabled = false
 
   // REPL loop
   let turnCount = 0
@@ -318,6 +328,11 @@ export async function startRepl(options: {
         console.log(newMode === 'auto-approve'
           ? theme.warning('YOLO mode ON — all tools auto-approved.')
           : theme.success('YOLO mode OFF — approval required for write tools.'))
+        continue
+      } else if (result.type === 'vim_toggle') {
+        vimEnabled = !vimEnabled
+        statusLine.set('mode', vimEnabled ? 'NORMAL' : 'INSERT')
+        console.log(vimEnabled ? theme.success('Vim mode ON') : theme.dim('Vim mode OFF'))
         continue
       } else if (result.type === 'model_switch') {
         engine['config'].model = result.model

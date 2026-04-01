@@ -8,6 +8,7 @@ export type CommandResult =
   | { type: 'model_switch'; model: string }
   | { type: 'list_bg_tasks' }
   | { type: 'rewind'; turns: number }
+  | { type: 'vim_toggle' }
 
 export interface CommandDefinition {
   name: string
