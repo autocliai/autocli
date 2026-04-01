@@ -117,10 +117,12 @@ export class QueryEngine {
 
   constructor(config: QueryEngineConfig) {
     this.config = config
+    // Ensure permissionConfig is always stored so setPermissionMode/getPermissionMode work
+    if (!this.config.permissionConfig) {
+      this.config.permissionConfig = { mode: 'default', rules: [], alwaysAllow: new Set() }
+    }
     this.client = new Anthropic({ apiKey: config.apiKey })
-    this.permissionGate = new PermissionGate(
-      config.permissionConfig || { mode: 'default', rules: [], alwaysAllow: new Set() }
-    )
+    this.permissionGate = new PermissionGate(this.config.permissionConfig)
   }
 
   // ── Public accessors (avoids bracket-notation private access) ──
@@ -140,7 +142,7 @@ export class QueryEngine {
   getPlanMode(): boolean { return this.config.planMode || false }
 
   setPermissionMode(mode: 'default' | 'auto-approve' | 'deny-all'): void {
-    if (this.config.permissionConfig) this.config.permissionConfig.mode = mode
+    this.config.permissionConfig!.mode = mode
     this.permissionGate.setMode(mode)
   }
   getPermissionMode(): string { return this.config.permissionConfig?.mode || 'default' }

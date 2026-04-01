@@ -50,8 +50,16 @@ export async function callOpenAI(params: {
           openaiMessages.push({ role: 'assistant', content: textParts.map(t => (t as { text: string }).text).join('\n') })
         }
       } else {
-        // Handle tool results (user role)
-        for (const block of msg.content as Array<Record<string, unknown>>) {
+        // Handle user messages with mixed content (text + tool_results)
+        const blocks = msg.content as Array<Record<string, unknown>>
+        const textBlocks = blocks.filter(b => b.type === 'text')
+        if (textBlocks.length > 0) {
+          openaiMessages.push({
+            role: 'user',
+            content: textBlocks.map(t => (t as { text: string }).text).join('\n'),
+          })
+        }
+        for (const block of blocks) {
           if (block.type === 'tool_result') {
             openaiMessages.push({
               role: 'tool',

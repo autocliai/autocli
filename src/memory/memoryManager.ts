@@ -98,7 +98,12 @@ export class MemoryManager {
   }
 
   private parseFile(filePath: string): MemoryEntry | undefined {
-    const raw = readFileSync(filePath, 'utf-8')
+    let raw: string
+    try {
+      raw = readFileSync(filePath, 'utf-8')
+    } catch {
+      return undefined // file may have been deleted between listFiles() and parseFile()
+    }
     const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/)
     if (!match) return undefined
 

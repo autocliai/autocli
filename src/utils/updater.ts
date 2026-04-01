@@ -3,7 +3,7 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { platform } from './platform.js'
 
-const VERSION = '0.1.0'
+const VERSION = '0.1.1'
 const UPDATE_CHECK_INTERVAL = 24 * 60 * 60 * 1000 // 24 hours
 
 export async function checkForUpdate(): Promise<string | null> {

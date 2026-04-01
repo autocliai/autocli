@@ -30,7 +30,12 @@ export const globTool: ToolDefinition = {
         return { output: 'No files matched the pattern.' }
       }
 
-      return { output: matches.join('\n') }
+      let output = matches.join('\n')
+      if (matches.length >= 1000) {
+        output += '\n\n[Results truncated: 1000+ files matched. Refine your pattern for more specific results.]'
+      }
+
+      return { output }
     } catch (err) {
       return { output: `Error: ${(err as Error).message}`, isError: true }
     }

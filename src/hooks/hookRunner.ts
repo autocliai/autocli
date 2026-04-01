@@ -1,5 +1,7 @@
 import type { HookDefinition, HookEvent, HookResult } from './types.js'
 
+const HOOK_TIMEOUT = 30_000 // 30 seconds
+
 export class HookRunner {
   private hooks: HookDefinition[]
 
@@ -37,17 +39,31 @@ export class HookRunner {
         env,
       })
 
-      const [stdout, stderr] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-      ])
+      // Timeout protection — kill hook if it takes too long
+      const timeout = setTimeout(() => {
+        try { proc.kill('SIGTERM') } catch {}
+        setTimeout(() => { try { proc.kill('SIGKILL') } catch {} }, 500)
+      }, HOOK_TIMEOUT)
 
-      await proc.exited
+      try {
+        const [stdout, stderr] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+        ])
 
-      if (stdout.trim()) combinedStdout += (combinedStdout ? '\n' : '') + stdout.trim()
-      if (stderr.trim()) combinedStderr += (combinedStderr ? '\n' : '') + stderr.trim()
+        clearTimeout(timeout)
+        await proc.exited
 
-      if (proc.exitCode !== 0) {
+        if (stdout.trim()) combinedStdout += (combinedStdout ? '\n' : '') + stdout.trim()
+        if (stderr.trim()) combinedStderr += (combinedStderr ? '\n' : '') + stderr.trim()
+
+        if (proc.exitCode !== 0) {
+          blocked = true
+          break
+        }
+      } catch {
+        clearTimeout(timeout)
+        combinedStderr += (combinedStderr ? '\n' : '') + `Hook timed out after ${HOOK_TIMEOUT / 1000}s: ${hook.command}`
         blocked = true
         break
       }

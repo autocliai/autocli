@@ -30,7 +30,7 @@ async function main() {
   const flags = parseArgs()
 
   if (flags.version) {
-    console.log('autocli v0.1.0')
+    console.log('autocli v0.1.1')
     process.exit(0)
   }
 
@@ -49,8 +49,8 @@ ${theme.bold('Options:')}
   -v, --version                 Show version
   -r, --resume [id]             Resume session (latest if no id)
   -p, --port <port>             Port for headless mode (default: 3456)
-  -m, --model <model>           Model to use (sonnet, opus, haiku, local)
-  --provider <name>             Provider (anthropic, openai, claude-local)
+  -m, --model <model>           Model to use (sonnet, opus, haiku, local, minimax)
+  --provider <name>             Provider (anthropic, openai, claude-local, minimaxi-cn)
   --headless                    Run as headless daemon
   --set-key <key>               Save API key
   --scheduler                    Run as scheduler daemon

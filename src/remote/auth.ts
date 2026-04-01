@@ -9,8 +9,8 @@ export class RemoteAuth {
     this.apiKey = apiKey
   }
 
-  generateToken(expiresIn = '24h'): string {
-    return jwt.sign({ type: 'autocli-remote' }, this.secret, { expiresIn })
+  generateToken(expiresIn: string | number = '24h'): string {
+    return jwt.sign({ type: 'autocli-remote' }, this.secret, { expiresIn } as jwt.SignOptions)
   }
 
   verifyToken(token: string): boolean {

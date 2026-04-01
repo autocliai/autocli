@@ -272,7 +272,7 @@ export async function startRepl(options: {
 
   layout.log('')
   layout.log(theme.bold('  ╭─────────────────────────╮'))
-  layout.log(theme.bold('  │') + theme.info('     autocli v0.1.0  ') + theme.bold('│'))
+  layout.log(theme.bold('  │') + theme.info('     autocli v0.1.1  ') + theme.bold('│'))
   layout.log(theme.bold('  ╰─────────────────────────╯'))
   layout.log('')
   layout.log(`  ${theme.dim('Model:')}   ${modelDisplayName(resolvedModel)}`)

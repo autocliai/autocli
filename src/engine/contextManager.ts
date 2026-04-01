@@ -66,11 +66,23 @@ export class ContextManager {
     if (messages.length <= 4) return messages
 
     // Find a safe split point: at a user message with string content (not tool results)
+    // Must not split a tool_use/tool_result pair
     let splitIdx = Math.floor(messages.length / 2)
     let foundSplit = false
+
+    const isSafeSplit = (idx: number): boolean => {
+      const msg = messages[idx]
+      // Don't split at a user message that contains tool_results — it pairs with the preceding assistant
+      if (Array.isArray(msg.content)) {
+        const hasToolResults = (msg.content as Array<{ type: string }>).some(b => b.type === 'tool_result')
+        if (hasToolResults) return false
+      }
+      return true
+    }
+
     for (let i = splitIdx; i > 2; i--) {
       const msg = messages[i]
-      if (msg.role === 'user' && typeof msg.content === 'string') {
+      if (msg.role === 'user' && typeof msg.content === 'string' && isSafeSplit(i)) {
         splitIdx = i
         foundSplit = true
         break
@@ -80,17 +92,17 @@ export class ContextManager {
     if (!foundSplit) {
       for (let i = splitIdx; i < messages.length - 2; i++) {
         const msg = messages[i]
-        if (msg.role === 'user' && typeof msg.content === 'string') {
+        if (msg.role === 'user' && typeof msg.content === 'string' && isSafeSplit(i)) {
           splitIdx = i
           foundSplit = true
           break
         }
       }
     }
-    // Last resort: find any user message boundary (after a tool_result block)
+    // Last resort: find any safe user message boundary
     if (!foundSplit) {
       for (let i = splitIdx; i > 2; i--) {
-        if (messages[i].role === 'user' && messages[i - 1]?.role === 'assistant') {
+        if (messages[i].role === 'user' && messages[i - 1]?.role === 'assistant' && isSafeSplit(i)) {
           splitIdx = i
           break
         }

@@ -63,6 +63,12 @@ export const webFetchTool: ToolDefinition = {
         return { output: `HTTP ${res.status}: ${res.statusText}`, isError: true }
       }
 
+      // Reject very large responses before loading into memory
+      const contentLength = res.headers.get('content-length')
+      if (contentLength && parseInt(contentLength, 10) > 100_000_000) {
+        return { output: `Error: Response too large (${(parseInt(contentLength, 10) / 1024 / 1024).toFixed(1)}MB). Max 100MB.`, isError: true }
+      }
+
       const contentType = res.headers.get('content-type') || ''
       const text = await res.text()
 

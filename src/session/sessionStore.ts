@@ -53,10 +53,16 @@ export class SessionStore {
     const messagesPath = join(this.dir, `${id}.jsonl`)
 
     if (existsSync(metaPath) && existsSync(messagesPath)) {
-      const meta = JSON.parse(readFileSync(metaPath, 'utf-8'))
-      const lines = readFileSync(messagesPath, 'utf-8').trim().split('\n').filter(Boolean)
-      const messages = lines.map(line => JSON.parse(line))
-      return { ...meta, messages }
+      try {
+        const meta = JSON.parse(readFileSync(metaPath, 'utf-8'))
+        const lines = readFileSync(messagesPath, 'utf-8').trim().split('\n').filter(Boolean)
+        const messages = lines
+          .map(line => { try { return JSON.parse(line) } catch { return null } })
+          .filter((m): m is NonNullable<typeof m> => m !== null)
+        return { ...meta, messages }
+      } catch {
+        // Fall through to legacy format
+      }
     }
 
     // Fallback: try legacy single JSON format
@@ -79,19 +85,21 @@ export class SessionStore {
       if (f.endsWith('.meta.json')) {
         const id = f.replace('.meta.json', '')
         seen.add(id)
-        const meta = JSON.parse(readFileSync(join(this.dir, f), 'utf-8'))
-        const messagesPath = join(this.dir, `${id}.jsonl`)
-        const messageCount = existsSync(messagesPath)
-          ? readFileSync(messagesPath, 'utf-8').trim().split('\n').filter(Boolean).length
-          : 0
-        results.push({
-          id: meta.id,
-          createdAt: meta.createdAt,
-          updatedAt: meta.updatedAt,
-          workingDir: meta.workingDir,
-          messageCount,
-          title: meta.title,
-        })
+        try {
+          const meta = JSON.parse(readFileSync(join(this.dir, f), 'utf-8'))
+          const messagesPath = join(this.dir, `${id}.jsonl`)
+          const messageCount = existsSync(messagesPath)
+            ? readFileSync(messagesPath, 'utf-8').trim().split('\n').filter(Boolean).length
+            : 0
+          results.push({
+            id: meta.id,
+            createdAt: meta.createdAt,
+            updatedAt: meta.updatedAt,
+            workingDir: meta.workingDir,
+            messageCount,
+            title: meta.title,
+          })
+        } catch { /* skip corrupt meta files */ }
       }
     }
 

@@ -1,3 +1,5 @@
+import { getLayout } from './fullscreen.js'
+
 export class StreamRenderer {
   private buffer = ''
   private writeToStdout: boolean
@@ -9,7 +11,12 @@ export class StreamRenderer {
   write(chunk: string): void {
     this.buffer += chunk
     if (this.writeToStdout) {
-      process.stdout.write(chunk)
+      const layout = getLayout()
+      if (layout.isEntered()) {
+        layout.writeOutput(chunk)
+      } else {
+        process.stdout.write(chunk)
+      }
     }
   }
 
@@ -28,7 +35,12 @@ export class StreamRenderer {
 
   newline(): void {
     if (this.writeToStdout) {
-      process.stdout.write('\n')
+      const layout = getLayout()
+      if (layout.isEntered()) {
+        layout.writeOutput('\n')
+      } else {
+        process.stdout.write('\n')
+      }
     }
   }
 }

@@ -17,9 +17,22 @@ async function executeShellBlocks(content: string, cwd: string): Promise<string>
   return content
 }
 
+const SHELL_DENY = [
+  /\brm\s+-[a-zA-Z]*f/,
+  /\bmkfs\b/,
+  /\bdd\s+of=/,
+  /:\(\)\s*\{/,                    // fork bomb
+  /\|\s*(?:bash|sh|zsh)\b/,       // pipe to shell
+]
+
 async function runShell(cmd: string, cwd: string): Promise<string> {
+  if (SHELL_DENY.some(p => p.test(cmd))) {
+    return `[Blocked: dangerous command in skill: ${cmd.slice(0, 60)}]`
+  }
   const proc = Bun.spawn(['bash', '-c', cmd], { cwd, stdout: 'pipe', stderr: 'pipe' })
+  const timeout = setTimeout(() => { try { proc.kill('SIGTERM') } catch {} }, 15_000)
   const stdout = await new Response(proc.stdout).text()
+  clearTimeout(timeout)
   await proc.exited
   return stdout.trim()
 }

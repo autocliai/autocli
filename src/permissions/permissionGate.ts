@@ -43,4 +43,8 @@ export class PermissionGate {
   addAlwaysAllow(toolName: string): void {
     this.config.alwaysAllow.add(toolName)
   }
+
+  setMode(mode: PermissionConfig['mode']): void {
+    this.config.mode = mode
+  }
 }
