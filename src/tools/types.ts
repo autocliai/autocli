@@ -12,6 +12,7 @@ export interface ToolContext {
   workingDir: string
   abortSignal?: AbortSignal
   onProgress?: (text: string) => void
+  sharedState?: Record<string, unknown>
 }
 
 export interface ToolResult {

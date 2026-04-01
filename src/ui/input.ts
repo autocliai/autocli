@@ -10,32 +10,32 @@ export async function readInput(prompt = '> '): Promise<string> {
 
   return new Promise((resolve) => {
     const lines: string[] = []
-    let multiline = false
 
     rl.prompt()
 
     rl.on('line', (line) => {
-      if (!multiline) {
-        if (line === '\\') {
-          multiline = true
-          rl.setPrompt(theme.dim('... '))
-          rl.prompt()
-          return
-        }
-        // Single line mode: resolve immediately
-        rl.close()
-        resolve(line)
+      // Backslash at end = continue to next line
+      if (line.endsWith('\\')) {
+        lines.push(line.slice(0, -1))
+        rl.setPrompt(theme.dim('... '))
+        rl.prompt()
         return
       }
-      // Multiline mode
-      if (line === '') {
+
+      lines.push(line)
+
+      // If we were in continuation mode, empty line ends it
+      // Otherwise, submit immediately
+      if (lines.length > 1 && line === '') {
+        lines.pop() // remove trailing empty
         rl.close()
         resolve(lines.join('\n'))
         return
       }
-      lines.push(line)
-      rl.setPrompt(theme.dim('... '))
-      rl.prompt()
+
+      // Single line or final line of continuation — submit
+      rl.close()
+      resolve(lines.join('\n'))
     })
 
     rl.on('close', () => {

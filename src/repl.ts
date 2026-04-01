@@ -107,6 +107,7 @@ export async function startRepl(options: {
     skillsPrompt,
     claudeMdPrompt: loadClaudeMdFiles(workingDir),
     gitContext,
+    maxSessionCost: config.maxSessionCost,
   })
   globalEngine = engine
   backgroundManager = new BackgroundAgentManager()

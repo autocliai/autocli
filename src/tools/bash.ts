@@ -16,6 +16,27 @@ export const bashTool: ToolDefinition = {
       timeout?: number
     }
 
+    // Dangerous command patterns
+    const DENY_PATTERNS = [
+      /\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?\/(?!\w)/, // rm -rf / or rm -f /
+      /\bgit\s+push\s+.*--force\s+.*(?:main|master)/i, // force push to main
+      /\bgit\s+reset\s+--hard\b/,                      // git reset --hard
+      /\bgit\s+clean\s+-[a-zA-Z]*f/,                   // git clean -f
+      /\bchmod\s+777\b/,                                // chmod 777
+      /\bcurl\s+.*\|\s*(?:bash|sh)\b/,                  // curl | bash
+      /\bdd\s+.*of=\/dev\/[sh]d/,                       // dd to raw device
+      /\bmkfs\b/,                                        // format filesystem
+      /\b:(){ :\|:& };:\b/,                             // fork bomb
+    ]
+
+    const isDangerous = DENY_PATTERNS.some(p => p.test(command))
+    if (isDangerous) {
+      return {
+        output: `Blocked: This command matches a dangerous pattern and was not executed. If you need to run it, ask the user to execute it manually.`,
+        isError: true,
+      }
+    }
+
     try {
       const proc = Bun.spawn(['bash', '-c', command], {
         cwd: context.workingDir,

@@ -10,6 +10,7 @@ export interface AppConfig {
   hooks: Array<{ event: string; command: string; pattern?: string }>
   remotePort: number
   remoteSecret?: string
+  maxSessionCost: number  // in dollars
 }
 
 const DEFAULT_CONFIG: AppConfig = {
@@ -18,6 +19,7 @@ const DEFAULT_CONFIG: AppConfig = {
   permissionMode: 'default',
   hooks: [],
   remotePort: 3456,
+  maxSessionCost: 5.00,
 }
 
 export function loadConfig(): AppConfig {

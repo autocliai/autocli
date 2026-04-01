@@ -29,6 +29,35 @@ export interface QueryEngineConfig {
   onToolUse?: (name: string, input: Record<string, unknown>) => void
   onToolResult?: (name: string, result: ToolResult) => void
   headless?: boolean
+  maxSessionCost?: number
+}
+
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries = 3,
+  headless = false,
+): Promise<T> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn()
+    } catch (err) {
+      const error = err as Error & { status?: number }
+      const status = error.status || 0
+
+      // Retry on rate limit (429) or overloaded (529)
+      if ((status === 429 || status === 529) && attempt < maxRetries) {
+        const delay = Math.min(1000 * Math.pow(2, attempt), 30000) // exponential backoff, max 30s
+        if (!headless) {
+          console.log(theme.warning(`Rate limited (${status}). Retrying in ${delay / 1000}s... (${attempt + 1}/${maxRetries})`))
+        }
+        await new Promise(resolve => setTimeout(resolve, delay))
+        continue
+      }
+
+      throw err
+    }
+  }
+  throw new Error('Max retries exceeded')
 }
 
 export class QueryEngine {
@@ -95,7 +124,8 @@ export class QueryEngine {
     const fitted = this.config.contextManager.fitToContext(messages)
     const systemPrompt = this.buildSystemPrompt(workingDir)
     const tools = this.config.toolRegistry.toApiSchemas()
-    const toolContext: ToolContext = { workingDir }
+    const sharedState: Record<string, unknown> = {}
+    const toolContext: ToolContext = { workingDir, sharedState }
 
     const spinner = new Spinner('Thinking...')
     const maxLoops = this.config.maxToolLoops || 40
@@ -156,23 +186,25 @@ export class QueryEngine {
         }
       }
 
-      const stream = this.client.messages.stream({
-        model: this.config.model,
-        max_tokens: this.config.maxTokens || 8192,
-        system: systemPrompt,
-        messages: apiMessages,
-        tools: tools as Anthropic.Tool[],
-      })
+      const response = await withRetry(async () => {
+        const s = this.client.messages.stream({
+          model: this.config.model,
+          max_tokens: this.config.maxTokens || 8192,
+          system: systemPrompt,
+          messages: apiMessages,
+          tools: tools as Anthropic.Tool[],
+        })
 
-      stream.on('text', (text) => {
-        stopSpinnerOnce()
-        if (!this.config.headless) {
-          process.stdout.write(text)
-        }
-        this.config.onText?.(text)
-      })
+        s.on('text', (text) => {
+          stopSpinnerOnce()
+          if (!this.config.headless) {
+            process.stdout.write(text)
+          }
+          this.config.onText?.(text)
+        })
 
-      const response = await stream.finalMessage()
+        return await s.finalMessage()
+      }, 3, !!this.config.headless)
       stopSpinnerOnce() // In case no text was emitted (pure tool_use response)
 
       if (!this.config.headless) {
@@ -184,6 +216,14 @@ export class QueryEngine {
         input: response.usage.input_tokens,
         output: response.usage.output_tokens,
       })
+
+      // Check cost limit
+      if (this.config.maxSessionCost && this.config.tokenCounter.totalCost >= this.config.maxSessionCost) {
+        if (!this.config.headless) {
+          console.log(theme.error(`Session cost limit reached ($${this.config.maxSessionCost}). Use /cost to check usage.`))
+        }
+        break
+      }
 
       // Process response blocks
       const assistantBlocks: ContentBlock[] = []
