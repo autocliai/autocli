@@ -21,6 +21,9 @@ import { commitCommand } from './commands/commit.js'
 import { compactCommand } from './commands/compact.js'
 import { clearCommand } from './commands/clear.js'
 import { sessionsCommand } from './commands/sessions.js'
+import { reviewCommand } from './commands/review.js'
+import { initCommand } from './commands/init.js'
+import { exportCommand } from './commands/export.js'
 import type { Message, CommandResult } from './commands/types.js'
 import type { HookEvent } from './hooks/types.js'
 import { join } from 'path'
@@ -83,6 +86,9 @@ export async function startRepl(options: {
   commandRegistry.register(compactCommand)
   commandRegistry.register(clearCommand)
   commandRegistry.register(sessionsCommand)
+  commandRegistry.register(reviewCommand)
+  commandRegistry.register(initCommand)
+  commandRegistry.register(exportCommand)
 
   const skillsList = skillLoader.list()
   const skillsPrompt = skillsList.length > 0

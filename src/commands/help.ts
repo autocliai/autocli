@@ -15,6 +15,9 @@ export const helpCommand: CommandDefinition = {
       '  /diff        Show git diff',
       '  /commit      Create a git commit',
       '  /compact     Compact conversation context',
+      '  /review      Review code changes (staged or unstaged)',
+      '  /init        Initialize .claude/ directory and CLAUDE.md',
+      '  /export      Export conversation to markdown file',
       '',
       theme.dim('Type a message to chat, or /command to run a command.'),
     ].join('\n')
