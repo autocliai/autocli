@@ -364,8 +364,15 @@ export async function startRepl(options: {
       } else if (result.type === 'model_switch') {
         engine['config'].model = result.model
         tokenCounter.updateModel(result.model)
-        statusLine.set('model', result.model.split('-').slice(0, 2).join(' '))
-        console.log(theme.success(`Model switched to ${result.model}`))
+        // Auto-switch provider when model implies it
+        if (result.model === 'claude-local') {
+          engine['config'].provider = 'claude-local'
+        } else if (engine['config'].provider === 'claude-local' && result.model !== 'claude-local') {
+          engine['config'].provider = 'anthropic'
+        }
+        const displayName = result.model === 'claude-local' ? 'claude (local)' : result.model.split('-').slice(0, 2).join(' ')
+        statusLine.set('model', displayName)
+        console.log(theme.success(`Model switched to ${displayName}`))
         continue
       } else if (result.type === 'team_status') {
         const activeTeam = teamManager.getActiveTeam()
