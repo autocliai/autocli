@@ -8,7 +8,14 @@ export class ContextManager {
   }
 
   estimateTokens(text: string): number {
-    return Math.ceil(text.length / 4)
+    // Improved estimation: code and special chars use more tokens per character.
+    // Count whitespace-separated words + punctuation/symbols for better accuracy.
+    const words = text.split(/\s+/).filter(Boolean).length
+    const symbols = (text.match(/[^\w\s]/g) || []).length
+    // Rough heuristic: ~1.3 tokens per word + 1 token per symbol cluster
+    // Falls back to char/4 for very short text where word counting is unreliable
+    if (words < 5) return Math.ceil(text.length / 3.5)
+    return Math.ceil(words * 1.3 + symbols * 0.5)
   }
 
   private messageTokens(msg: Message): number {
@@ -36,10 +43,49 @@ export class ContextManager {
     budget -= this.messageTokens(lastMsg)
 
     for (let i = messages.length - 2; i >= 0; i--) {
-      const cost = this.messageTokens(messages[i])
-      if (budget - cost < 0) break
-      budget -= cost
-      result.unshift(messages[i])
+      const msg = messages[i]
+      const cost = this.messageTokens(msg)
+      // Check if this is an assistant message containing tool_use blocks
+      const hasToolUse = msg.role === 'assistant' && Array.isArray(msg.content) &&
+        (msg.content as Array<{ type: string }>).some(b => b.type === 'tool_use')
+      if (hasToolUse) {
+        // Must include the next message (tool_result) together
+        const next = messages[i + 1]
+        if (next && result[0] !== next) {
+          const pairCost = cost + this.messageTokens(next)
+          if (budget - pairCost < 0) break
+          budget -= pairCost
+          result.unshift(next)
+          result.unshift(msg)
+        } else {
+          if (budget - cost < 0) break
+          budget -= cost
+          result.unshift(msg)
+        }
+      } else {
+        // Check if this is a tool_result user message — must keep with preceding assistant
+        const hasToolResult = msg.role === 'user' && Array.isArray(msg.content) &&
+          (msg.content as Array<{ type: string }>).some(b => b.type === 'tool_result')
+        if (hasToolResult) {
+          const prev = messages[i - 1]
+          if (prev) {
+            const pairCost = cost + this.messageTokens(prev)
+            if (budget - pairCost < 0) break
+            budget -= pairCost
+            result.unshift(msg)
+            result.unshift(prev)
+            i-- // skip the prev message in next iteration
+          } else {
+            if (budget - cost < 0) break
+            budget -= cost
+            result.unshift(msg)
+          }
+        } else {
+          if (budget - cost < 0) break
+          budget -= cost
+          result.unshift(msg)
+        }
+      }
     }
 
     const dropped = messages.length - 1 - result.length
@@ -139,6 +185,12 @@ export class ContextManager {
       )
 
       const recentMessages = messages.slice(splitIdx)
+      if (recentMessages[0]?.role === 'assistant') {
+        return [
+          { role: 'user', content: `[Previous conversation summary]\n${summary}` },
+          ...recentMessages,
+        ]
+      }
       return [
         { role: 'user', content: `[Previous conversation summary]\n${summary}` },
         { role: 'assistant', content: 'Understood. I have context from our previous discussion. How can I continue helping?' },
