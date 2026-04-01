@@ -88,8 +88,8 @@ export const bashTool: ToolDefinition = {
       const timeoutPromise = new Promise<void>((resolve) => { timeoutResolve = resolve })
       const timer = setTimeout(() => {
         timedOut = true
-        try { proc.kill('SIGTERM') } catch {}
-        setTimeout(() => { try { proc.kill('SIGKILL') } catch {} }, 500)
+        try { if (proc.pid) process.kill(-proc.pid, 'SIGTERM'); else proc.kill('SIGTERM') } catch {}
+        setTimeout(() => { try { if (proc.pid) process.kill(-proc.pid, 'SIGKILL'); else proc.kill('SIGKILL') } catch {} }, 500)
         timeoutResolve?.()
       }, timeout)
 
