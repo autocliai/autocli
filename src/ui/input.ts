@@ -15,26 +15,26 @@ export async function readInput(prompt = '> '): Promise<string> {
     rl.prompt()
 
     rl.on('line', (line) => {
-      if (line === '' && !multiline && lines.length > 0) {
+      if (!multiline) {
+        if (line === '\\') {
+          multiline = true
+          rl.setPrompt(theme.dim('... '))
+          rl.prompt()
+          return
+        }
+        // Single line mode: resolve immediately
         rl.close()
-        resolve(lines.join('\n'))
+        resolve(line)
         return
       }
-      if (line === '\\' && !multiline) {
-        multiline = true
-        rl.setPrompt(theme.dim('... '))
-        rl.prompt()
-        return
-      }
-      if (line === '' && multiline) {
+      // Multiline mode
+      if (line === '') {
         rl.close()
         resolve(lines.join('\n'))
         return
       }
       lines.push(line)
-      if (multiline) {
-        rl.setPrompt(theme.dim('... '))
-      }
+      rl.setPrompt(theme.dim('... '))
       rl.prompt()
     })
 

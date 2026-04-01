@@ -2,6 +2,7 @@ export type CommandResult =
   | { type: 'output'; text: string }
   | { type: 'prompt'; prompt: string }
   | { type: 'compact' }
+  | { type: 'clear' }
 
 export interface CommandDefinition {
   name: string
