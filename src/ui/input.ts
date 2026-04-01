@@ -56,3 +56,23 @@ export async function readSingleLine(prompt: string): Promise<string> {
     })
   })
 }
+
+export function completeCommand(input: string, commands: string[]): string {
+  if (!input.startsWith('/')) return input
+
+  const prefix = input.slice(1)
+  const matches = commands.filter(c => c.startsWith(prefix))
+
+  if (matches.length === 0) return input
+  if (matches.length === 1) return '/' + matches[0]
+
+  // Find longest common prefix among matches
+  let common = matches[0]
+  for (const m of matches.slice(1)) {
+    let i = 0
+    while (i < common.length && i < m.length && common[i] === m[i]) i++
+    common = common.slice(0, i)
+  }
+
+  return '/' + common
+}
