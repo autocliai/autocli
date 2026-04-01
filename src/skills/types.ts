@@ -3,6 +3,7 @@ export interface SkillDefinition {
   description: string
   content: string
   filePath: string
+  allowedTools?: string[]
 }
 
 export interface SkillMetadata {

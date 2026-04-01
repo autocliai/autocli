@@ -31,10 +31,15 @@ export class SkillLoader {
 
     const name = this.extractField(frontmatter, 'name')
     const description = this.extractField(frontmatter, 'description')
+    const toolsRaw = this.extractField(frontmatter, 'allowed-tools')
+      || this.extractField(frontmatter, 'tools')
+    const allowedTools = toolsRaw
+      ? toolsRaw.split(',').map(t => t.trim()).filter(Boolean)
+      : undefined
 
     if (!name) return undefined
 
-    return { name, description: description || '', content, filePath }
+    return { name, description: description || '', content, filePath, allowedTools }
   }
 
   private extractField(frontmatter: string, field: string): string | undefined {

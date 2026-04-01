@@ -29,8 +29,12 @@ export function createSkillTool(loader: SkillLoader): ToolDefinition {
         content = `Arguments: ${args}\n\n${content}`
       }
 
+      const toolNote = skill.allowedTools
+        ? `\n\n[This skill restricts tools to: ${skill.allowedTools.join(', ')}]`
+        : ''
+
       return {
-        output: `# Skill: ${skill.name}\n\n${content}`,
+        output: `# Skill: ${skill.name}\n\n${content}${toolNote}`,
       }
     },
   }
