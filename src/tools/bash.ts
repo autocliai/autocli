@@ -31,6 +31,8 @@ export const bashTool: ToolDefinition = {
       /\b:(){ :\|:& };:\b/,                             // fork bomb
       /\|\s*(?:bash|sh|zsh)\b/,                         // pipe to shell
       /\beval\s+/,                                       // eval command
+      /\bbash\s+-c\b/,                                    // bash -c invocation
+      /\bsh\s+-c\b/,                                      // sh -c invocation
       /\$\(.*(?:rm|dd|mkfs|format)\b/,                  // command substitution with dangerous commands
     ]
 
@@ -65,11 +67,13 @@ export const bashTool: ToolDefinition = {
       }
     }
 
+    // Use a unique marker unlikely to appear in normal output
     const cwdMarker = `___AUTOCLI_CWD_${Date.now()}_${Math.random().toString(36).slice(2)}___`
 
     try {
-      // Append pwd tracking to capture directory changes
-      const trackingCommand = `${command}\n__exit=$?\necho "${cwdMarker}$(pwd)"\nexit $__exit`
+      // Append pwd tracking to capture directory changes.
+      // Use pwd -P for canonical path to resolve symlinks consistently.
+      const trackingCommand = `${command}\n__exit=$?\necho "${cwdMarker}$(pwd -P 2>/dev/null || pwd)"\nexit $__exit`
 
       // Use setsid so we can kill the entire process group on timeout
       const proc = Bun.spawn(['setsid', 'bash', '-c', trackingCommand], {
