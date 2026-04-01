@@ -194,6 +194,15 @@ export async function startRepl(options: {
 
   let currentAbortController: AbortController | null = null
 
+  // Simple async mutex to prevent concurrent engine.run() calls (main REPL vs RC poll)
+  let engineLock: Promise<void> = Promise.resolve()
+  function withEngineLock<T>(fn: () => Promise<T>): Promise<T> {
+    let release: () => void
+    const prev = engineLock
+    engineLock = new Promise<void>(r => { release = r })
+    return prev.then(fn).finally(() => release!())
+  }
+
   // Handle Ctrl+C gracefully
   process.on('SIGINT', () => {
     const l = getLayout()
@@ -588,23 +597,26 @@ export async function startRepl(options: {
           ;(async () => {
             for await (const item of rc.pollInput()) {
               if (item.type === 'input' && item.message) {
-                // Inject browser message as user input
-                messages.push({ role: 'user', content: item.message })
-                layout.log(theme.info(`[RC] ${item.message}`))
-                // Signal the engine to process this
-                rc.pushEvent('agent_start', {})
-                try {
-                  const { response, messages: updated } = await engine.run(messages, workingDir)
-                  messages = updated
-                  const text = typeof response.content === 'string'
-                    ? response.content
-                    : response.content.filter((b): b is { type: 'text'; text: string } => b.type === 'text').map(b => b.text).join('\n')
-                  layout.log(text)
-                  rc.pushEvent('agent_done', {})
-                } catch (err) {
-                  rc.pushEvent('error', { message: (err as Error).message })
-                  rc.pushEvent('agent_done', {})
-                }
+                const rcMessage = item.message
+                await withEngineLock(async () => {
+                  // Inject browser message as user input
+                  messages.push({ role: 'user', content: rcMessage })
+                  layout.log(theme.info(`[RC] ${rcMessage}`))
+                  // Signal the engine to process this
+                  rc.pushEvent('agent_start', {})
+                  try {
+                    const { response, messages: updated } = await engine.run(messages, workingDir)
+                    messages = updated
+                    const text = typeof response.content === 'string'
+                      ? response.content
+                      : response.content.filter((b): b is { type: 'text'; text: string } => b.type === 'text').map(b => b.text).join('\n')
+                    layout.log(text)
+                    rc.pushEvent('agent_done', {})
+                  } catch (err) {
+                    rc.pushEvent('error', { message: (err as Error).message })
+                    rc.pushEvent('agent_done', {})
+                  }
+                })
               } else if (item.type === 'approval_response' && typeof item.approved === 'boolean') {
                 // Handle approval from browser — logged for awareness
                 layout.log(theme.dim(`[RC] Approval: ${item.approved ? 'approved' : 'denied'}`))
@@ -671,49 +683,51 @@ export async function startRepl(options: {
     const startTime = Date.now()
     const prevCost = tokenCounter.totalCost
     currentAbortController = new AbortController()
-    try {
-      const result = await engine.run(messages, workingDir, currentAbortController.signal)
-      messages = result.messages
+    await withEngineLock(async () => {
+      try {
+        const result = await engine.run(messages, workingDir, currentAbortController!.signal)
+        messages = result.messages
 
-      // Auto-title session from first user message
-      if (session && !session.title && messages.length >= 2) {
-        const firstMsg = messages.find(m => m.role === 'user' && typeof m.content === 'string')
-        if (firstMsg && typeof firstMsg.content === 'string') {
-          session.title = firstMsg.content.slice(0, 60) + (firstMsg.content.length > 60 ? '...' : '')
+        // Auto-title session from first user message
+        if (session && !session.title && messages.length >= 2) {
+          const firstMsg = messages.find(m => m.role === 'user' && typeof m.content === 'string')
+          if (firstMsg && typeof firstMsg.content === 'string') {
+            session.title = firstMsg.content.slice(0, 60) + (firstMsg.content.length > 60 ? '...' : '')
+          }
+        }
+
+        // Update status bar
+        layout.setStatus('tokens', tokenCounter.formatUsage())
+        layout.setStatus('cost', `$${tokenCounter.totalCost.toFixed(4)}`)
+        const turnCost = tokenCounter.totalCost - prevCost
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
+        layout.log(theme.dim(`  ⏱ ${elapsed}s | turn: $${turnCost.toFixed(4)} | total: ${tokenCounter.formatUsage()}`))
+
+        // Auto-compact if context is getting too large
+        if (contextManager.needsCompaction(messages)) {
+          layout.log(theme.dim('Auto-compacting context...'))
+          messages = await contextManager.compactWithLLM(messages, async (prompt) => {
+            const { response: compactResp } = await engine.run(
+              [{ role: 'user', content: prompt }],
+              workingDir,
+            )
+            if (typeof compactResp.content === 'string') return compactResp.content
+            return compactResp.content
+              .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+              .map(b => b.text).join('\n')
+          }).catch(() => contextManager.fitToContext(messages))
+          layout.log(theme.dim(`Compacted to ${messages.length} messages`))
+          layout.log(theme.dim('  ─── context compacted above this line ───'))
+        }
+      } catch (err) {
+        // Roll back entire turn on error (user input + notifications)
+        messages.length = messageCountBeforeTurn
+        if ((err as Error).name !== 'AbortError' && !currentAbortController?.signal.aborted) {
+          layout.log(formatError((err as Error).message))
+          hookRunner.run('on_error', { error: (err as Error).message }).catch(() => {})
         }
       }
-
-      // Update status bar
-      layout.setStatus('tokens', tokenCounter.formatUsage())
-      layout.setStatus('cost', `$${tokenCounter.totalCost.toFixed(4)}`)
-      const turnCost = tokenCounter.totalCost - prevCost
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-      layout.log(theme.dim(`  ⏱ ${elapsed}s | turn: $${turnCost.toFixed(4)} | total: ${tokenCounter.formatUsage()}`))
-
-      // Auto-compact if context is getting too large
-      if (contextManager.needsCompaction(messages)) {
-        layout.log(theme.dim('Auto-compacting context...'))
-        messages = await contextManager.compactWithLLM(messages, async (prompt) => {
-          const { response: compactResp } = await engine.run(
-            [{ role: 'user', content: prompt }],
-            workingDir,
-          )
-          if (typeof compactResp.content === 'string') return compactResp.content
-          return compactResp.content
-            .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
-            .map(b => b.text).join('\n')
-        }).catch(() => contextManager.fitToContext(messages))
-        layout.log(theme.dim(`Compacted to ${messages.length} messages`))
-        layout.log(theme.dim('  ─── context compacted above this line ───'))
-      }
-    } catch (err) {
-      // Roll back entire turn on error (user input + notifications)
-      messages.length = messageCountBeforeTurn
-      if ((err as Error).name !== 'AbortError' && !currentAbortController?.signal.aborted) {
-        layout.log(formatError((err as Error).message))
-        hookRunner.run('on_error', { error: (err as Error).message }).catch(() => {})
-      }
-    }
+    })
     currentAbortController = null
 
     // Run hooks
