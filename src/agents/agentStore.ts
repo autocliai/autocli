@@ -41,18 +41,18 @@ export class AgentStore {
     }
   }
 
-  loadAgent(name: string): AgentDefinition {
+  loadAgent(name: string): AgentDefinition | undefined {
     const dir = join(this.agentsDir, name)
     const jsonPath = join(dir, 'agent.json')
     if (!existsSync(jsonPath)) {
-      throw new Error(`Agent not found: ${name}`)
+      return undefined
     }
 
     let agent: AgentDefinition
     try {
       agent = JSON.parse(readFileSync(jsonPath, 'utf-8'))
     } catch {
-      throw new Error(`Agent "${name}" has a corrupted config file`)
+      return undefined
     }
 
     const agentMdPath = join(dir, 'AGENT.md')
@@ -132,15 +132,15 @@ export class AgentStore {
     writeFileSync(path, JSON.stringify(template, null, 2))
   }
 
-  loadTeam(name: string): TeamTemplate {
+  loadTeam(name: string): TeamTemplate | undefined {
     const path = join(this.teamsDir, `${name}.json`)
     if (!existsSync(path)) {
-      throw new Error(`Team not found: ${name}`)
+      return undefined
     }
     try {
       return JSON.parse(readFileSync(path, 'utf-8'))
     } catch {
-      throw new Error(`Team "${name}" has a corrupted config file`)
+      return undefined
     }
   }
 

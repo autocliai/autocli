@@ -30,6 +30,7 @@ export const agentsCommand: CommandDefinition = {
         for (const agentName of agents) {
           try {
             const agent = store.loadAgent(agentName)
+            if (!agent) { lines.push(`  ${theme.warning(agentName)} ${theme.dim('(error loading)')}`); continue }
             const dir = join(agentsDir, agentName)
             const hasAgent = existsSync(join(dir, 'AGENT.md'))
             const hasSoul = existsSync(join(dir, 'SOUL.md'))
@@ -57,11 +58,9 @@ export const agentsCommand: CommandDefinition = {
 
       case 'show': {
         if (!name) return theme.error('Usage: /agents show <name>')
-        let agent
-        try {
-          agent = store.loadAgent(name)
-        } catch (e: unknown) {
-          return theme.error((e as Error).message)
+        const agent = store.loadAgent(name)
+        if (!agent) {
+          return theme.error(`Agent not found: ${name}`)
         }
 
         const lines: string[] = [
