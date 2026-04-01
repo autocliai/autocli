@@ -4,7 +4,7 @@ import type { ToolDefinition } from './types.js'
 
 export const fileReadTool: ToolDefinition = {
   name: 'Read',
-  description: 'Read a file from the filesystem. Returns contents with line numbers.',
+  description: 'Read a file from the filesystem. Returns contents with line numbers. Use this instead of cat/head/tail via Bash. Supports offset and limit for large files.',
   inputSchema: z.object({
     file_path: z.string().describe('Absolute path to the file'),
     offset: z.number().optional().describe('Line number to start from (1-based)'),

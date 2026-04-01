@@ -4,7 +4,7 @@ import type { ToolDefinition } from './types.js'
 
 export const globTool: ToolDefinition = {
   name: 'Glob',
-  description: 'Find files matching a glob pattern.',
+  description: 'Find files matching a glob pattern. Use instead of find/ls via Bash. Example patterns: "**/*.ts", "src/**/*.test.ts".',
   inputSchema: z.object({
     pattern: z.string().describe('Glob pattern (e.g. "**/*.ts")'),
     path: z.string().optional().describe('Directory to search in'),

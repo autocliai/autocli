@@ -5,7 +5,7 @@ import type { ToolDefinition } from './types.js'
 
 export const fileWriteTool: ToolDefinition = {
   name: 'Write',
-  description: 'Create or overwrite a file with the given content.',
+  description: 'Create or overwrite a file. Only use for NEW files or complete rewrites. For existing files, prefer the Edit tool.',
   inputSchema: z.object({
     file_path: z.string().describe('Absolute path to the file'),
     content: z.string().describe('Content to write'),

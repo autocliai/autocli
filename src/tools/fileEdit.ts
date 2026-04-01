@@ -4,7 +4,7 @@ import type { ToolDefinition } from './types.js'
 
 export const fileEditTool: ToolDefinition = {
   name: 'Edit',
-  description: 'Perform exact string replacement in a file. The old_string must match exactly.',
+  description: 'Perform exact string replacement in a file. The old_string must match exactly and uniquely. Prefer this over Write for modifying existing files.',
   inputSchema: z.object({
     file_path: z.string().describe('Absolute path to the file'),
     old_string: z.string().describe('Exact string to find'),

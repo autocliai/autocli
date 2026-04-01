@@ -11,25 +11,39 @@ export async function buildGitContext(workingDir: string): Promise<string> {
     git.log(5),
   ])
 
-  // Brief file tree (top-level only)
-  let tree = ''
-  try {
-    const proc = Bun.spawn(['ls', '-1'], { cwd: workingDir, stdout: 'pipe', stderr: 'pipe' })
-    const stdout = await new Response(proc.stdout).text()
-    await proc.exited
-    if (stdout.trim()) {
-      tree = '\nProject files:\n' + stdout.trim().split('\n').slice(0, 30).join('\n')
-    }
-  } catch { /* ignore */ }
-
-  return [
+  const sections = [
     '# Git Context',
     `Branch: ${branch}`,
-    '',
-    'Recent commits:',
-    log,
-    '',
-    'Status:',
-    status,
-  ].join('\n') + tree
+  ]
+
+  if (status !== '(clean)') {
+    sections.push(`\nUncommitted changes:\n${status}`)
+  }
+
+  sections.push(`\nRecent commits:\n${log}`)
+
+  return sections.join('\n')
+}
+
+export async function buildProjectHint(workingDir: string): Promise<string> {
+  try {
+    const proc = Bun.spawn(['find', '.', '-maxdepth', '2', '-type', 'f', '-not', '-path', '*/node_modules/*', '-not', '-path', '*/.git/*', '-not', '-path', '*/dist/*'], {
+      cwd: workingDir,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    const stdout = await new Response(proc.stdout).text()
+    await proc.exited
+
+    const files = stdout.trim().split('\n').filter(Boolean)
+    if (files.length === 0) return ''
+
+    // Cap at 50 files
+    const display = files.slice(0, 50)
+    const truncated = files.length > 50 ? `\n(... and ${files.length - 50} more files)` : ''
+
+    return `# Project Structure (top 2 levels)\n\n${display.join('\n')}${truncated}`
+  } catch {
+    return ''
+  }
 }

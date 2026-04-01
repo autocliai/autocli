@@ -3,7 +3,7 @@ import type { ToolDefinition } from './types.js'
 
 export const grepTool: ToolDefinition = {
   name: 'Grep',
-  description: 'Search file contents using a regex pattern. Uses ripgrep if available, falls back to built-in.',
+  description: 'Search file contents using a regex pattern. Use instead of grep/rg via Bash. Returns matching lines with file paths and line numbers.',
   inputSchema: z.object({
     pattern: z.string().describe('Regex pattern to search for'),
     path: z.string().optional().describe('File or directory to search'),
