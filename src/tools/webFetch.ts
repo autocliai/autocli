@@ -1,3 +1,4 @@
+import { resolve as dnsResolve } from 'dns/promises'
 import { z } from 'zod'
 import type { ToolDefinition } from './types.js'
 
@@ -47,6 +48,30 @@ export const webFetchTool: ToolDefinition = {
       parsed.protocol === 'file:'
     ) {
       return { output: `Error: Fetching internal/private URLs is not allowed: ${url}`, isError: true }
+    }
+
+    // Resolve DNS and validate resolved IPs to prevent DNS rebinding attacks
+    try {
+      const ips = await dnsResolve(parsed.hostname)
+      for (const ip of ips) {
+        if (
+          ip === '127.0.0.1' || ip === '::1' || ip === '0.0.0.0' ||
+          ip.startsWith('10.') ||
+          ip.startsWith('192.168.') ||
+          ip.match(/^172\.(1[6-9]|2\d|3[01])\./) ||
+          ip.startsWith('169.254.') ||
+          ip.startsWith('fc') || ip.startsWith('fd') ||
+          ip.startsWith('fe80') ||
+          ip.startsWith('::ffff:127.') ||
+          ip.startsWith('::ffff:10.') ||
+          ip.startsWith('::ffff:192.168.') ||
+          ip.match(/^::ffff:172\.(1[6-9]|2\d|3[01])\./)
+        ) {
+          return { output: `Error: URL resolves to internal IP (${ip}): ${url}`, isError: true }
+        }
+      }
+    } catch {
+      // DNS resolution failed — allow fetch to handle the error naturally
     }
 
     try {
