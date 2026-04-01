@@ -2,6 +2,45 @@ import { z } from 'zod'
 import type { ToolDefinition } from '../tools/types.js'
 import type { SkillLoader } from './loader.js'
 
+async function executeShellBlocks(content: string, cwd: string): Promise<string> {
+  // Handle ```! code blocks
+  content = await replaceAsync(content, /```!\s*\n([\s\S]*?)```/g, async (_, cmd) => {
+    const result = await runShell(cmd.trim(), cwd)
+    return '```\n' + result + '\n```'
+  })
+
+  // Handle inline !`cmd`
+  content = await replaceAsync(content, /!`([^`]+)`/g, async (_, cmd) => {
+    return await runShell(cmd.trim(), cwd)
+  })
+
+  return content
+}
+
+async function runShell(cmd: string, cwd: string): Promise<string> {
+  const proc = Bun.spawn(['bash', '-c', cmd], { cwd, stdout: 'pipe', stderr: 'pipe' })
+  const stdout = await new Response(proc.stdout).text()
+  await proc.exited
+  return stdout.trim()
+}
+
+async function replaceAsync(str: string, regex: RegExp, fn: (match: string, ...args: string[]) => Promise<string>): Promise<string> {
+  const matches: Array<{ match: string; index: number; length: number; groups: string[] }> = []
+  let m: RegExpExecArray | null
+  const r = new RegExp(regex.source, regex.flags)
+  while ((m = r.exec(str)) !== null) {
+    matches.push({ match: m[0], index: m.index, length: m[0].length, groups: m.slice(1) })
+  }
+  let result = str
+  // Process from end to start to preserve indices
+  for (let i = matches.length - 1; i >= 0; i--) {
+    const { match, index, length, groups } = matches[i]
+    const replacement = await fn(match, ...groups)
+    result = result.slice(0, index) + replacement + result.slice(index + length)
+  }
+  return result
+}
+
 export function createSkillTool(loader: SkillLoader): ToolDefinition {
   return {
     name: 'Skill',
@@ -12,7 +51,7 @@ export function createSkillTool(loader: SkillLoader): ToolDefinition {
     }),
     isReadOnly: true,
 
-    async call(input, _context) {
+    async call(input, context) {
       const { skill: skillName, args } = input as { skill: string; args?: string }
 
       const skill = loader.get(skillName)
@@ -25,6 +64,19 @@ export function createSkillTool(loader: SkillLoader): ToolDefinition {
       }
 
       let content = skill.content
+
+      // Execute shell blocks
+      content = await executeShellBlocks(content, context.workingDir)
+
+      // Variable substitution
+      if (skill.filePath) {
+        const skillDir = skill.filePath.replace(/\/[^/]+$/, '')
+        content = content.replace(/\$\{CLAUDE_SKILL_DIR\}/g, skillDir)
+      }
+      if (args) {
+        content = content.replace(/\{\{\s*args?\s*\}\}/g, args)
+      }
+
       if (args) {
         content = `Arguments: ${args}\n\n${content}`
       }
