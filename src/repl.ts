@@ -7,6 +7,7 @@ import { CommandRegistry } from './commands/registry.js'
 import { SessionStore } from './session/sessionStore.js'
 import { MemoryManager } from './memory/memoryManager.js'
 import { SkillLoader } from './skills/loader.js'
+import { TaskStore } from './tasks/taskStore.js'
 import { HookRunner } from './hooks/hookRunner.js'
 import { StatusLine } from './ui/statusLine.js'
 import { readInput } from './ui/input.js'
@@ -40,8 +41,9 @@ export async function startRepl(options: {
 
   // Initialize subsystems
   const skillLoader = new SkillLoader([join(platform.configDir, 'skills')])
+  const taskStore = new TaskStore(join(platform.configDir, 'tasks'))
   const toolRegistry = new ToolRegistry()
-  registerAllTools(toolRegistry, skillLoader)
+  registerAllTools(toolRegistry, skillLoader, taskStore)
 
   const tokenCounter = new TokenCounter(config.model)
   const contextManager = new ContextManager()
