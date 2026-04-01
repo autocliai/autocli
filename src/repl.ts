@@ -1,4 +1,4 @@
-import { getApiKey, loadConfig, resolveModel } from './utils/config.js'
+import { getApiKey, loadConfig, resolveModel, modelDisplayName } from './utils/config.js'
 import { ToolRegistry } from './tools/registry.js'
 import { TokenCounter } from './engine/tokenCounter.js'
 import { ContextManager } from './engine/contextManager.js'
@@ -9,10 +9,10 @@ import { MemoryManager } from './memory/memoryManager.js'
 import { SkillLoader } from './skills/loader.js'
 import { TaskStore } from './tasks/taskStore.js'
 import { HookRunner } from './hooks/hookRunner.js'
-import { StatusLine } from './ui/statusLine.js'
 import { readInput, setVimMode } from './ui/input.js'
 import { theme } from './ui/theme.js'
 import { platform } from './utils/platform.js'
+import { getLayout, resetLayout } from './ui/fullscreen.js'
 import { registerAllTools } from './tools/registerAll.js'
 import { helpCommand } from './commands/help.js'
 import { costCommand } from './commands/cost.js'
@@ -47,6 +47,7 @@ import { activateCommand } from './commands/activate.js'
 import { vimCommand } from './commands/vim.js'
 import { brainCommand } from './commands/brain.js'
 import { searchCommand } from './commands/search.js'
+import { agentsCommand } from './commands/agents.js'
 import { BrainReader } from './brain/reader.js'
 import { InputHistory } from './ui/history.js'
 import { checkForUpdate, showUpdateNotice } from './utils/updater.js'
@@ -124,6 +125,7 @@ export async function startRepl(options: {
   commandRegistry.register(teamCommand)
   commandRegistry.register(brainCommand)
   commandRegistry.register(searchCommand)
+  commandRegistry.register(agentsCommand)
 
   const brainReader = new BrainReader(join(platform.configDir, 'brain'))
 
@@ -178,13 +180,14 @@ export async function startRepl(options: {
 
   // Handle Ctrl+C gracefully
   process.on('SIGINT', () => {
+    const l = getLayout()
     if (currentAbortController) {
       currentAbortController.abort()
       currentAbortController = null
-      console.log(theme.warning('\nCancelled.'))
+      l.log(theme.warning('Cancelled.'))
     } else {
       // If not in a query, treat as exit
-      console.log(theme.dim('\nUse /exit to quit.'))
+      l.log(theme.dim('Use /exit to quit.'))
     }
   })
 
@@ -200,17 +203,25 @@ export async function startRepl(options: {
 
   let messages: Message[] = session?.messages || []
 
+  // Enter fullscreen layout
+  const layout = getLayout()
+  layout.enter()
+
+  // Ensure we clean up fullscreen on exit
+  const cleanupFullscreen = () => { resetLayout() }
+  process.on('exit', cleanupFullscreen)
+
   if (session && messages.length > 0) {
-    console.log(theme.dim(`Resumed session ${session.id} (${session.messages.length} messages)`))
-    console.log()
+    layout.log(theme.dim(`Resumed session ${session.id} (${session.messages.length} messages)`))
+    layout.log('')
     // Show last few messages for context
     const historyToShow = messages.slice(-6)
     for (const msg of historyToShow) {
       if (typeof msg.content === 'string') {
         if (msg.role === 'user') {
-          console.log(theme.info('You: ') + theme.dim(msg.content.slice(0, 200) + (msg.content.length > 200 ? '...' : '')))
+          layout.log(theme.info('You: ') + theme.dim(msg.content.slice(0, 200) + (msg.content.length > 200 ? '...' : '')))
         } else {
-          console.log(theme.success('Claude: ') + theme.dim(msg.content.slice(0, 200) + (msg.content.length > 200 ? '...' : '')))
+          layout.log(theme.success('Claude: ') + theme.dim(msg.content.slice(0, 200) + (msg.content.length > 200 ? '...' : '')))
         }
       } else {
         // ContentBlock[] — summarize
@@ -218,28 +229,22 @@ export async function startRepl(options: {
         const toolBlocks = msg.content.filter(b => b.type === 'tool_use' || b.type === 'tool_result')
         if (msg.role === 'assistant' && textBlocks.length > 0) {
           const text = (textBlocks[0] as { text: string }).text
-          console.log(theme.success('Claude: ') + theme.dim(text.slice(0, 200) + (text.length > 200 ? '...' : '')))
+          layout.log(theme.success('Claude: ') + theme.dim(text.slice(0, 200) + (text.length > 200 ? '...' : '')))
         }
         if (toolBlocks.length > 0) {
-          console.log(theme.dim(`  (${toolBlocks.length} tool calls)`))
+          layout.log(theme.dim(`  (${toolBlocks.length} tool calls)`))
         }
       }
     }
-    console.log(theme.separator())
-    console.log()
+    layout.log(theme.separator())
+    layout.log('')
   }
 
-  // Status line
-  const statusLine = new StatusLine()
-  statusLine.set('model', resolvedModel.split('-').slice(0, 2).join(' '))
-  statusLine.set('tokens', '0↑ 0↓')
-  statusLine.set('cost', '$0.0000')
-  statusLine.set('mode', 'INSERT')
-
-  process.stdout.on('resize', () => {
-    statusLine.hide()
-    statusLine.show()
-  })
+  // Status bar (replaces old StatusLine)
+  layout.setStatus('model', modelDisplayName(resolvedModel))
+  layout.setStatus('tokens', '0↑ 0↓')
+  layout.setStatus('cost', '$0.0000')
+  layout.setStatus('mode', 'INSERT')
 
   // Banner
   const gitBranch = await (async () => {
@@ -250,17 +255,17 @@ export async function startRepl(options: {
     } catch { return null }
   })()
 
-  console.log()
-  console.log(theme.bold('  ╭─────────────────────────╮'))
-  console.log(theme.bold('  │') + theme.info('     autocli v0.1.0  ') + theme.bold('│'))
-  console.log(theme.bold('  ╰─────────────────────────╯'))
-  console.log()
-  console.log(`  ${theme.dim('Model:')}   ${resolvedModel.split('-').slice(0, 2).join(' ')}`)
-  console.log(`  ${theme.dim('Dir:')}     ${workingDir}`)
-  if (gitBranch) console.log(`  ${theme.dim('Branch:')}  ${gitBranch}`)
-  if (isLicenseActive()) console.log(`  ${formatInfo('Licensed')}`)
-  console.log(`  ${theme.dim('Type')} ${theme.info('/help')} ${theme.dim('for commands')}`)
-  console.log()
+  layout.log('')
+  layout.log(theme.bold('  ╭─────────────────────────╮'))
+  layout.log(theme.bold('  │') + theme.info('     autocli v0.1.0  ') + theme.bold('│'))
+  layout.log(theme.bold('  ╰─────────────────────────╯'))
+  layout.log('')
+  layout.log(`  ${theme.dim('Model:')}   ${modelDisplayName(resolvedModel)}`)
+  layout.log(`  ${theme.dim('Dir:')}     ${workingDir}`)
+  if (gitBranch) layout.log(`  ${theme.dim('Branch:')}  ${gitBranch}`)
+  if (isLicenseActive()) layout.log(`  ${formatInfo('Licensed')}`)
+  layout.log(`  ${theme.dim('Type')} ${theme.info('/help')} ${theme.dim('for commands')}`)
+  layout.log('')
 
   // Check for updates (non-blocking)
   checkForUpdate().then(v => {
@@ -287,8 +292,9 @@ export async function startRepl(options: {
       session.totalCost = tokenCounter.totalCost
       session.totalTokens = { input: tokenCounter.totalInput, output: tokenCounter.totalOutput }
       sessionStore.save(session)
-      console.log(theme.dim(`Session saved: ${session.id}`))
-      break
+      layout.log(theme.dim(`Session saved: ${session.id}`))
+      resetLayout()
+      process.exit(0)
     }
 
     // Check for commands
@@ -296,7 +302,7 @@ export async function startRepl(options: {
     if (parsed) {
       const cmd = commandRegistry.get(parsed.name)
       if (!cmd) {
-        console.log(theme.error(`Unknown command: /${parsed.name}`))
+        layout.log(theme.error(`Unknown command: /${parsed.name}`))
         continue
       }
 
@@ -310,14 +316,14 @@ export async function startRepl(options: {
 
       // Handle typed or string command results
       if (typeof result === 'string') {
-        console.log(result)
+        layout.log(result)
         continue
       }
 
       if (result.type === 'prompt') {
         messages.push({ role: 'user', content: result.prompt })
       } else if (result.type === 'compact') {
-        console.log(theme.dim('Compacting with LLM summarization...'))
+        layout.log(theme.dim('Compacting with LLM summarization...'))
         messages = await contextManager.compactWithLLM(messages, async (prompt) => {
           const { response } = await engine.run(
             [{ role: 'user', content: prompt }],
@@ -328,17 +334,17 @@ export async function startRepl(options: {
             .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
             .map(b => b.text).join('\n')
         })
-        console.log(theme.success(`Context compacted to ${messages.length} messages`))
-        console.log(theme.dim('  ─── context compacted above this line ───'))
+        layout.log(theme.success(`Context compacted to ${messages.length} messages`))
+        layout.log(theme.dim('  ─── context compacted above this line ───'))
         continue
       } else if (result.type === 'clear') {
         messages = []
-        console.log(theme.success('Conversation cleared.'))
+        layout.log(theme.success('Conversation cleared.'))
         continue
       } else if (result.type === 'plan_toggle') {
         const currentPlan = engine['config'].planMode || false
         engine['config'].planMode = !currentPlan
-        console.log(engine['config'].planMode
+        layout.log(engine['config'].planMode
           ? theme.warning('Plan mode ON — write tools disabled.')
           : theme.success('Plan mode OFF — all tools enabled.'))
         continue
@@ -349,17 +355,17 @@ export async function startRepl(options: {
           engine['config'].permissionConfig.mode = newMode
         }
         engine['permissionGate']['config'].mode = newMode
-        console.log(newMode === 'auto-approve'
+        layout.log(newMode === 'auto-approve'
           ? theme.warning('YOLO mode ON — all tools auto-approved.')
           : theme.success('YOLO mode OFF — approval required for write tools.'))
         continue
       } else if (result.type === 'vim_toggle') {
         vimEnabled = !vimEnabled
         setVimMode(vimEnabled, (mode) => {
-          statusLine.set('mode', mode === 'normal' ? 'NORMAL' : 'INSERT')
+          layout.setStatus('mode', mode === 'normal' ? 'NORMAL' : 'INSERT')
         })
-        statusLine.set('mode', vimEnabled ? 'NORMAL' : 'INSERT')
-        console.log(vimEnabled ? theme.success('Vim mode ON') : theme.dim('Vim mode OFF'))
+        layout.setStatus('mode', vimEnabled ? 'NORMAL' : 'INSERT')
+        layout.log(vimEnabled ? theme.success('Vim mode ON') : theme.dim('Vim mode OFF'))
         continue
       } else if (result.type === 'model_switch') {
         engine['config'].model = result.model
@@ -370,14 +376,14 @@ export async function startRepl(options: {
         } else if (engine['config'].provider === 'claude-local' && result.model !== 'claude-local') {
           engine['config'].provider = 'anthropic'
         }
-        const displayName = result.model === 'claude-local' ? 'claude (local)' : result.model.split('-').slice(0, 2).join(' ')
-        statusLine.set('model', displayName)
-        console.log(theme.success(`Model switched to ${displayName}`))
+        const displayName = modelDisplayName(result.model)
+        layout.setStatus('model', displayName)
+        layout.log(theme.success(`Model switched to ${displayName}`))
         continue
       } else if (result.type === 'team_status') {
         const activeTeam = teamManager.getActiveTeam()
         if (!activeTeam) {
-          console.log(theme.dim('No active team. Use the TeamCreate tool to create one.'))
+          layout.log(theme.dim('No active team. Use the TeamCreate tool to create one.'))
         } else {
           const agents: AgentStatus[] = activeTeam.workers.map(w => ({
             id: w.id,
@@ -388,21 +394,21 @@ export async function startRepl(options: {
             tokenCount: 0,
             elapsed: w.startedAt ? Math.round(((w.completedAt || Date.now()) - w.startedAt) / 1000) : 0,
           }))
-          console.log(renderSwarmStatus(agents))
-          console.log()
-          console.log(renderAgentTree(agents))
-          if (activeTeam.goal) console.log(theme.dim(`  Goal: ${activeTeam.goal}`))
+          layout.log(renderSwarmStatus(agents))
+          layout.log('')
+          layout.log(renderAgentTree(agents))
+          if (activeTeam.goal) layout.log(theme.dim(`  Goal: ${activeTeam.goal}`))
         }
         continue
       } else if (result.type === 'list_bg_tasks') {
         const tasks = bgTaskManager.list()
         if (tasks.length === 0) {
-          console.log(theme.dim('No background tasks running.'))
+          layout.log(theme.dim('No background tasks running.'))
         } else {
           for (const t of tasks) {
             const status = t.status === 'running' ? theme.info('▶') : t.status === 'completed' ? theme.success('✓') : theme.error('✗')
             const elapsed = Math.round((Date.now() - t.startedAt) / 1000)
-            console.log(`  ${status} ${t.id} (${elapsed}s) ${theme.dim(t.command.slice(0, 60))}`)
+            layout.log(`  ${status} ${t.id} (${elapsed}s) ${theme.dim(t.command.slice(0, 60))}`)
           }
         }
         continue
@@ -417,15 +423,15 @@ export async function startRepl(options: {
           }
         }
         messages = messages.slice(0, cutIdx)
-        console.log(theme.success(`Rewound ${turnsFound} turn(s). ${messages.length} messages remaining.`))
+        layout.log(theme.success(`Rewound ${turnsFound} turn(s). ${messages.length} messages remaining.`))
         continue
       } else {
-        console.log(result.text)
+        layout.log(result.text)
         continue
       }
     } else {
       messages.push({ role: 'user', content: input })
-      console.log(theme.dim(`  ${new Date().toLocaleTimeString()}`))
+      layout.log(theme.dim(`  ${new Date().toLocaleTimeString()}`))
     }
 
     // Track message count before this turn so we can roll back on error
@@ -437,7 +443,7 @@ export async function startRepl(options: {
       const notifText = notif.status === 'completed'
         ? `[Background agent "${notif.description}" completed]\n\nResult:\n${notif.result}`
         : `[Background agent "${notif.description}" failed: ${notif.error}]`
-      console.log(theme.info(notifText))
+      layout.log(theme.info(notifText))
       messages.push({ role: 'user', content: notifText })
     }
 
@@ -447,7 +453,7 @@ export async function startRepl(options: {
       const notifText = worker.status === 'completed'
         ? `[Team "${team.name}" — worker "${worker.name}" completed]\n\nResult:\n${worker.result?.slice(0, 2000)}`
         : `[Team "${team.name}" — worker "${worker.name}" failed: ${worker.error}]`
-      console.log(theme.info(notifText))
+      layout.log(theme.info(notifText))
       messages.push({ role: 'user', content: notifText })
     }
 
@@ -476,15 +482,16 @@ export async function startRepl(options: {
         }
       }
 
-      // Update status
-      statusLine.set('tokens', tokenCounter.formatUsage())
+      // Update status bar
+      layout.setStatus('tokens', tokenCounter.formatUsage())
+      layout.setStatus('cost', `$${tokenCounter.totalCost.toFixed(4)}`)
       const turnCost = tokenCounter.totalCost - prevCost
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-      console.log(theme.dim(`  ⏱ ${elapsed}s | turn: $${turnCost.toFixed(4)} | total: ${tokenCounter.formatUsage()}`))
+      layout.log(theme.dim(`  ⏱ ${elapsed}s | turn: $${turnCost.toFixed(4)} | total: ${tokenCounter.formatUsage()}`))
 
       // Auto-compact if context is getting too large
       if (contextManager.needsCompaction(messages)) {
-        console.log(theme.dim('Auto-compacting context...'))
+        layout.log(theme.dim('Auto-compacting context...'))
         messages = await contextManager.compactWithLLM(messages, async (prompt) => {
           const { response: compactResp } = await engine.run(
             [{ role: 'user', content: prompt }],
@@ -495,14 +502,14 @@ export async function startRepl(options: {
             .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
             .map(b => b.text).join('\n')
         }).catch(() => contextManager.fitToContext(messages))
-        console.log(theme.dim(`Compacted to ${messages.length} messages`))
-        console.log(theme.dim('  ─── context compacted above this line ───'))
+        layout.log(theme.dim(`Compacted to ${messages.length} messages`))
+        layout.log(theme.dim('  ─── context compacted above this line ───'))
       }
     } catch (err) {
       // Remove all messages we added this turn (user input + notifications)
       messages.length = messageCountBeforeTurn
       if ((err as Error).name !== 'AbortError' && !currentAbortController?.signal.aborted) {
-        console.log(formatError((err as Error).message))
+        layout.log(formatError((err as Error).message))
         hookRunner.run('on_error', { error: (err as Error).message }).catch(() => {})
       }
     }
@@ -533,6 +540,6 @@ export async function startRepl(options: {
       }, apiKey, 'claude-haiku-3-5-20241022').catch(() => {}) // Silent failure — always use haiku for cost
     }
 
-    console.log()
+    layout.log('')
   }
 }
