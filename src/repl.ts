@@ -22,6 +22,7 @@ import { compactCommand } from './commands/compact.js'
 import type { Message, CommandResult } from './commands/types.js'
 import type { HookEvent } from './hooks/types.js'
 import { join } from 'path'
+import { loadClaudeMdFiles } from './memory/claudeMd.js'
 
 let globalEngine: QueryEngine | null = null
 export function getGlobalEngine(): QueryEngine | null {
@@ -86,6 +87,7 @@ export async function startRepl(options: {
     },
     memoryPrompt: memoryManager.loadForPrompt(),
     skillsPrompt,
+    claudeMdPrompt: loadClaudeMdFiles(workingDir),
   })
   globalEngine = engine
   backgroundManager = new BackgroundAgentManager()
