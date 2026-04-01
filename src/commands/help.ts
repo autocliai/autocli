@@ -32,6 +32,7 @@ export const helpCommand: CommandDefinition = {
       '  /team        Show team status and worker progress',
       '  /brain [cmd]  Second Brain (stats, search, show, distill)',
       '  /search <q>  Search conversation transcript (aliases: /find, /grep)',
+      '  /permissions  View and manage tool permission rules (alias: /perms)',
       '',
       theme.dim('Type a message to chat, or /command to run a command.'),
     ].join('\n')

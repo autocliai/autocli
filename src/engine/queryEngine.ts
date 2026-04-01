@@ -12,6 +12,7 @@ import { theme } from '../ui/theme.js'
 import { applyInlineMarkdown } from '../ui/streamMarkdown.js'
 import { StreamRenderer } from '../ui/stream.js'
 import { getLayout } from '../ui/fullscreen.js'
+import { logger } from '../utils/logger.js'
 
 const SYSTEM_PROMPT = `You are an expert coding assistant. You help users with software engineering tasks including writing code, debugging, refactoring, and explaining concepts.
 
@@ -146,6 +147,7 @@ export class QueryEngine {
     this.permissionGate.setMode(mode)
   }
   getPermissionMode(): string { return this.config.permissionConfig?.mode || 'default' }
+  getPermissionConfig(): PermissionConfig { return this.config.permissionConfig! }
 
   getToolRegistry(): ToolRegistry { return this.config.toolRegistry }
   getWire(): QueryEngineConfig['wire'] { return this.config.wire }
@@ -308,18 +310,24 @@ export class QueryEngine {
             system: systemPrompt,
             messages: apiMessages as Array<{ role: string; content: unknown }>,
             tools: tools as Array<{ name: string; description: string; input_schema: Record<string, unknown> }>,
+            stream: true,
+            onText: (text) => {
+              stopSpinnerOnce()
+              streamRenderer.write(text)
+              this.config.onText?.(text)
+              this.config.wire?.emit('text', { text })
+            },
           })
         }, 3, !!this.config.headless)
         stopSpinnerOnce()
 
-        // Emit text for OpenAI response (apply inline markdown since we have full text)
+        // For non-streamed text blocks (tool-only responses), render them
         for (const block of oaiResult.content) {
-          if (block.type === 'text') {
+          if (block.type === 'text' && !streamRenderer.hasContent()) {
             if (!this.config.headless) {
               const formatted = block.text.split('\n').map(l => applyInlineMarkdown(l)).join('\n')
               getLayout().writeOutput(formatted)
             }
-            // Capture raw text in streamRenderer so text_done wire event has content
             streamRenderer.capture(block.text)
             this.config.onText?.(block.text)
           }
@@ -489,6 +497,7 @@ export class QueryEngine {
           } catch (err) {
             const errMsg = (err as Error).message
             result = { output: `Tool crashed: ${errMsg}`, isError: true }
+            logger.error('Tool execution failed', { tool: toolName, error: errMsg })
             this.config.wire?.emit('error', { tool: toolName, message: errMsg })
             this.config.hookRunner?.run('on_error', { tool: toolName, error: errMsg }).catch(() => {})
           }

@@ -55,6 +55,7 @@ import { Scheduler } from './scheduler/scheduler.js'
 import { AgentStore } from './agents/agentStore.js'
 import { scheduleCommand } from './commands/schedule.js'
 import { deployCommand } from './commands/deploy.js'
+import { permissionsCommand } from './commands/permissions.js'
 import { BrainReader } from './brain/reader.js'
 import { InputHistory } from './ui/history.js'
 import { checkForUpdate, showUpdateNotice } from './utils/updater.js'
@@ -137,6 +138,7 @@ export async function startRepl(options: {
   commandRegistry.register(statusCommand)
   commandRegistry.register(deployCommand)
   commandRegistry.register(rcCommand)
+  commandRegistry.register(permissionsCommand)
 
   const brainReader = new BrainReader(join(platform.configDir, 'brain'))
 
