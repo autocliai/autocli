@@ -23,6 +23,7 @@ export interface QueryEngineConfig {
   systemPrompt?: string
   memoryPrompt?: string
   skillsPrompt?: string
+  claudeMdPrompt?: string
   onText?: (text: string) => void
   onToolUse?: (name: string, input: Record<string, unknown>) => void
   onToolResult?: (name: string, result: ToolResult) => void
@@ -51,6 +52,7 @@ export class QueryEngine {
       this.config.systemPrompt || '',
       this.config.memoryPrompt || '',
       this.config.skillsPrompt || '',
+      this.config.claudeMdPrompt || '',
     ].filter(Boolean).join('\n')
   }
 
@@ -211,6 +213,52 @@ export class QueryEngine {
   }
 }
 
+// Background agent management
+export interface BackgroundAgent {
+  id: string
+  description: string
+  status: 'running' | 'completed' | 'failed'
+  result?: string
+  error?: string
+  notified: boolean
+  startedAt: number
+}
+
+export class BackgroundAgentManager {
+  private agents = new Map<string, BackgroundAgent>()
+
+  register(id: string, description: string): void {
+    this.agents.set(id, {
+      id, description, status: 'running', notified: false, startedAt: Date.now(),
+    })
+  }
+
+  get(id: string): BackgroundAgent | undefined {
+    return this.agents.get(id)
+  }
+
+  complete(id: string, result: string): void {
+    const agent = this.agents.get(id)
+    if (agent) { agent.status = 'completed'; agent.result = result }
+  }
+
+  fail(id: string, error: string): void {
+    const agent = this.agents.get(id)
+    if (agent) { agent.status = 'failed'; agent.error = error }
+  }
+
+  getPendingNotifications(): BackgroundAgent[] {
+    const pending: BackgroundAgent[] = []
+    for (const agent of this.agents.values()) {
+      if ((agent.status === 'completed' || agent.status === 'failed') && !agent.notified) {
+        agent.notified = true
+        pending.push(agent)
+      }
+    }
+    return pending
+  }
+}
+
 // Sub-agent types and function
 import { getAgentType, type AgentType } from '../tools/agentTypes.js'
 
@@ -270,6 +318,37 @@ export async function runSubAgent(
 
   if (!engine) {
     return 'Error: query engine not initialized'
+  }
+
+  // Background execution
+  if (options?.runInBackground) {
+    const { getBackgroundManager } = await import('../repl.js')
+    const bgMgr = getBackgroundManager()
+    if (bgMgr) {
+      const agentId = `bg-${Date.now()}`
+      bgMgr.register(agentId, _description)
+
+      // Fire and forget
+      const parentRegistry = engine['config'].toolRegistry as ToolRegistry
+      const agentType = options?.subagentType
+        ? getAgentType(options.subagentType)
+        : getAgentType('general-purpose')
+      const subEngine = buildSubEngine(engine, agentType, parentRegistry, options?.model)
+      ;(async () => {
+        try {
+          const msgs: Message[] = [{ role: 'user', content: prompt }]
+          const { response } = await subEngine.run(msgs, context.workingDir)
+          const text = typeof response.content === 'string'
+            ? response.content
+            : response.content.filter((b): b is { type: 'text'; text: string } => b.type === 'text').map(b => b.text).join('\n')
+          bgMgr.complete(agentId, text)
+        } catch (err) {
+          bgMgr.fail(agentId, (err as Error).message)
+        }
+      })()
+
+      return `Agent launched in background (${agentId}). You will be notified when it completes.`
+    }
   }
 
   const agentType = options?.subagentType

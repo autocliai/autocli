@@ -2,7 +2,7 @@ import { getApiKey, loadConfig } from './utils/config.js'
 import { ToolRegistry } from './tools/registry.js'
 import { TokenCounter } from './engine/tokenCounter.js'
 import { ContextManager } from './engine/contextManager.js'
-import { QueryEngine } from './engine/queryEngine.js'
+import { QueryEngine, BackgroundAgentManager } from './engine/queryEngine.js'
 import { CommandRegistry } from './commands/registry.js'
 import { SessionStore } from './session/sessionStore.js'
 import { MemoryManager } from './memory/memoryManager.js'
@@ -29,6 +29,11 @@ export function getGlobalEngine(): QueryEngine | null {
 }
 export function setGlobalEngine(engine: QueryEngine): void {
   globalEngine = engine
+}
+
+let backgroundManager: BackgroundAgentManager | null = null
+export function getBackgroundManager(): BackgroundAgentManager | null {
+  return backgroundManager
 }
 
 export async function startRepl(options: {
@@ -83,6 +88,7 @@ export async function startRepl(options: {
     skillsPrompt,
   })
   globalEngine = engine
+  backgroundManager = new BackgroundAgentManager()
 
   // Load or create session
   let session = options.resume
@@ -159,6 +165,16 @@ export async function startRepl(options: {
       }
     } else {
       messages.push({ role: 'user', content: input })
+    }
+
+    // Check for background agent completions
+    const bgNotifs = backgroundManager?.getPendingNotifications() || []
+    for (const notif of bgNotifs) {
+      const notifText = notif.status === 'completed'
+        ? `[Background agent "${notif.description}" completed]\n\nResult:\n${notif.result}`
+        : `[Background agent "${notif.description}" failed: ${notif.error}]`
+      console.log(theme.info(notifText))
+      messages.push({ role: 'user', content: notifText })
     }
 
     // Run hooks
