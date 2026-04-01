@@ -66,10 +66,61 @@ ${theme.bold('Options:')}
     return
   }
 
+  if (flags.prompt) {
+    await runOneShot(flags.prompt as string, process.cwd())
+    return
+  }
+
   await startRepl({
     resume: flags.resume as string | undefined,
     workingDir: process.cwd(),
   })
+}
+
+async function runOneShot(prompt: string, workingDir: string): Promise<void> {
+  const { loadConfig, getApiKey } = await import('./utils/config.js')
+  const { ToolRegistry } = await import('./tools/registry.js')
+  const { TokenCounter } = await import('./engine/tokenCounter.js')
+  const { ContextManager } = await import('./engine/contextManager.js')
+  const { QueryEngine } = await import('./engine/queryEngine.js')
+  const { registerAllTools } = await import('./tools/registerAll.js')
+  const { setGlobalEngine } = await import('./repl.js')
+
+  const config = loadConfig()
+  const apiKey = getApiKey()
+
+  const toolRegistry = new ToolRegistry()
+  registerAllTools(toolRegistry)
+
+  const tokenCounter = new TokenCounter(config.model)
+  const contextManager = new ContextManager()
+
+  const engine = new QueryEngine({
+    apiKey,
+    model: config.model,
+    toolRegistry,
+    tokenCounter,
+    contextManager,
+    permissionConfig: {
+      mode: config.permissionMode,
+      rules: [],
+      alwaysAllow: new Set(),
+    },
+  })
+  setGlobalEngine(engine)
+
+  const messages = [{ role: 'user' as const, content: prompt }]
+
+  try {
+    await engine.run(messages, workingDir)
+  } catch (err) {
+    console.error(theme.error((err as Error).message))
+    process.exit(1)
+  }
+
+  // Print cost summary
+  console.log()
+  console.log(theme.dim(tokenCounter.formatUsage()))
 }
 
 main().catch(err => {
