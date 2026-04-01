@@ -28,6 +28,9 @@ import { planCommand } from './commands/plan.js'
 import { modelCommand } from './commands/model.js'
 import { yoloCommand } from './commands/yolo.js'
 import { contextCommand } from './commands/context.js'
+import { doctorCommand } from './commands/doctor.js'
+import { rewindCommand } from './commands/rewind.js'
+import { copyCommand } from './commands/copy.js'
 import type { Message, CommandResult } from './commands/types.js'
 import type { HookEvent } from './hooks/types.js'
 import { join } from 'path'
@@ -106,6 +109,9 @@ export async function startRepl(options: {
   commandRegistry.register(skillsCommand)
   commandRegistry.register(activateCommand)
   commandRegistry.register(contextCommand)
+  commandRegistry.register(doctorCommand)
+  commandRegistry.register(rewindCommand)
+  commandRegistry.register(copyCommand)
 
   const skillsList = skillLoader.list()
   const skillsPrompt = skillsList.length > 0
@@ -203,6 +209,12 @@ export async function startRepl(options: {
   statusLine.set('model', resolvedModel.split('-').slice(0, 2).join(' '))
   statusLine.set('tokens', '0↑ 0↓')
   statusLine.set('cost', '$0.0000')
+  statusLine.set('mode', 'INSERT')
+
+  process.stdout.on('resize', () => {
+    statusLine.hide()
+    statusLine.show()
+  })
 
   // Banner
   const gitBranch = await (async () => {
@@ -324,12 +336,18 @@ export async function startRepl(options: {
           }
         }
         continue
+      } else if (result.type === 'rewind') {
+        const turns = Math.min(result.turns * 2, messages.length) // *2 for user+assistant pairs
+        messages = messages.slice(0, -turns)
+        console.log(theme.success(`Rewound ${result.turns} turn(s). ${messages.length} messages remaining.`))
+        continue
       } else {
         console.log(result.text)
         continue
       }
     } else {
       messages.push({ role: 'user', content: input })
+      console.log(theme.dim(`  ${new Date().toLocaleTimeString()}`))
     }
 
     // Check for background agent completions
@@ -347,15 +365,25 @@ export async function startRepl(options: {
 
     // Query LLM
     const startTime = Date.now()
+    const prevCost = tokenCounter.totalCost
     currentAbortController = new AbortController()
     try {
       const result = await engine.run(messages, workingDir, currentAbortController.signal)
       messages = result.messages
 
+      // Auto-title session from first user message
+      if (session && !session.title && messages.length >= 2) {
+        const firstMsg = messages.find(m => m.role === 'user' && typeof m.content === 'string')
+        if (firstMsg && typeof firstMsg.content === 'string') {
+          session.title = firstMsg.content.slice(0, 60) + (firstMsg.content.length > 60 ? '...' : '')
+        }
+      }
+
       // Update status
       statusLine.set('tokens', tokenCounter.formatUsage())
+      const turnCost = tokenCounter.totalCost - prevCost
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1)
-      console.log(theme.dim(`  ⏱ ${elapsed}s | ${tokenCounter.formatUsage()}`))
+      console.log(theme.dim(`  ⏱ ${elapsed}s | turn: $${turnCost.toFixed(4)} | total: ${tokenCounter.formatUsage()}`))
 
       // Auto-compact if context is getting too large
       if (contextManager.needsCompaction(messages)) {

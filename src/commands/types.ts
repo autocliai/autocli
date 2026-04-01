@@ -7,6 +7,7 @@ export type CommandResult =
   | { type: 'yolo_toggle' }
   | { type: 'model_switch'; model: string }
   | { type: 'list_bg_tasks' }
+  | { type: 'rewind'; turns: number }
 
 export interface CommandDefinition {
   name: string

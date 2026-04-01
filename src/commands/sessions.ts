@@ -17,7 +17,8 @@ export const sessionsCommand: CommandDefinition = {
     const lines = list.slice(0, 20).map(s => {
       const date = new Date(s.updatedAt).toLocaleDateString()
       const time = new Date(s.updatedAt).toLocaleTimeString()
-      return `  ${theme.bold(s.id)} ${theme.dim(`${date} ${time}`)} ${s.messageCount} msgs ${theme.dim(s.workingDir)}`
+      const titleStr = s.title ? ` ${theme.info(s.title)}` : ''
+      return `  ${theme.bold(s.id)} ${theme.dim(`${date} ${time}`)} ${s.messageCount} msgs${titleStr} ${theme.dim(s.workingDir)}`
     })
 
     return [

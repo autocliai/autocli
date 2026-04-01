@@ -38,6 +38,7 @@ export class SessionStore {
       workingDir: session.workingDir,
       totalCost: session.totalCost,
       totalTokens: session.totalTokens,
+      title: session.title,
     }
     writeFileSync(metaPath, JSON.stringify(meta, null, 2))
 
@@ -89,6 +90,7 @@ export class SessionStore {
           updatedAt: meta.updatedAt,
           workingDir: meta.workingDir,
           messageCount,
+          title: meta.title,
         })
       }
     }

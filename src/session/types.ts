@@ -8,6 +8,7 @@ export interface Session {
   messages: Message[]
   totalCost: number
   totalTokens: { input: number; output: number }
+  title?: string
 }
 
 export interface SessionMetadata {
@@ -16,4 +17,5 @@ export interface SessionMetadata {
   updatedAt: string
   workingDir: string
   messageCount: number
+  title?: string
 }
