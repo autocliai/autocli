@@ -51,14 +51,8 @@ export async function callOpenAI(params: {
         }
       } else {
         // Handle user messages with mixed content (text + tool_results)
+        // OpenAI requires tool results as separate 'tool' role messages BEFORE any user text
         const blocks = msg.content as Array<Record<string, unknown>>
-        const textBlocks = blocks.filter(b => b.type === 'text')
-        if (textBlocks.length > 0) {
-          openaiMessages.push({
-            role: 'user',
-            content: textBlocks.map(t => (t as { text: string }).text).join('\n'),
-          })
-        }
         for (const block of blocks) {
           if (block.type === 'tool_result') {
             openaiMessages.push({
@@ -67,6 +61,13 @@ export async function callOpenAI(params: {
               content: String(block.content),
             })
           }
+        }
+        const textBlocks = blocks.filter(b => b.type === 'text')
+        if (textBlocks.length > 0) {
+          openaiMessages.push({
+            role: 'user',
+            content: textBlocks.map(t => (t as { text: string }).text).join('\n'),
+          })
         }
       }
     }

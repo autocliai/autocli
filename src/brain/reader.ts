@@ -129,7 +129,11 @@ export class BrainReader {
   private loadIndex(): BrainIndex {
     const indexPath = join(this.baseDir, '_index.json')
     if (!existsSync(indexPath)) return { notes: {}, backlinks: {}, tags: {} }
-    return JSON.parse(readFileSync(indexPath, 'utf-8'))
+    try {
+      return JSON.parse(readFileSync(indexPath, 'utf-8'))
+    } catch {
+      return { notes: {}, backlinks: {}, tags: {} }
+    }
   }
 
   private readNoteFile(path: string): BrainNote | undefined {

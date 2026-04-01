@@ -12,7 +12,7 @@ export async function checkForUpdate(): Promise<string | null> {
   // Rate limit checks
   if (existsSync(checkFile)) {
     const lastCheck = parseInt(readFileSync(checkFile, 'utf-8').trim(), 10)
-    if (Date.now() - lastCheck < UPDATE_CHECK_INTERVAL) return null
+    if (!isNaN(lastCheck) && Date.now() - lastCheck < UPDATE_CHECK_INTERVAL) return null
   }
 
   try {

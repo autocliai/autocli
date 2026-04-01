@@ -30,11 +30,21 @@ async function runShell(cmd: string, cwd: string): Promise<string> {
     return `[Blocked: dangerous command in skill: ${cmd.slice(0, 60)}]`
   }
   const proc = Bun.spawn(['bash', '-c', cmd], { cwd, stdout: 'pipe', stderr: 'pipe' })
-  const timeout = setTimeout(() => { try { proc.kill('SIGTERM') } catch {} }, 15_000)
-  const stdout = await new Response(proc.stdout).text()
-  clearTimeout(timeout)
-  await proc.exited
-  return stdout.trim()
+  const timeoutPromise = new Promise<'timeout'>((resolve) =>
+    setTimeout(() => resolve('timeout'), 15_000)
+  )
+  const processPromise = (async () => {
+    const stdout = await new Response(proc.stdout).text()
+    await proc.exited
+    return stdout
+  })()
+  const result = await Promise.race([processPromise, timeoutPromise])
+  if (result === 'timeout') {
+    try { proc.kill('SIGTERM') } catch {}
+    setTimeout(() => { try { proc.kill('SIGKILL') } catch {} }, 500)
+    return `[Timed out after 15s: ${cmd.slice(0, 60)}]`
+  }
+  return result.trim()
 }
 
 async function replaceAsync(str: string, regex: RegExp, fn: (match: string, ...args: string[]) => Promise<string>): Promise<string> {

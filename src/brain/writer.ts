@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } from 'fs'
+import { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync, openSync, closeSync, writeSync, readSync, ftruncateSync } from 'fs'
 import { join } from 'path'
 import type { BrainNote, BrainIndex, PARACategory } from './types.js'
 import { extractLinks, extractTags } from './utils.js'
@@ -126,38 +126,54 @@ export class BrainWriter {
     if (!existsSync(this.indexPath)) {
       return { notes: {}, backlinks: {}, tags: {} }
     }
-    return JSON.parse(readFileSync(this.indexPath, 'utf-8'))
+    try {
+      return JSON.parse(readFileSync(this.indexPath, 'utf-8'))
+    } catch {
+      return { notes: {}, backlinks: {}, tags: {} }
+    }
   }
 
   private updateIndex(note: BrainNote): void {
-    const index = this.loadIndex()
+    // Atomic read-modify-write via file descriptor to prevent concurrent corruption
+    const fd = openSync(this.indexPath, 'a+')
+    try {
+      const buf = Buffer.alloc(1024 * 1024) // 1MB max index
+      const bytesRead = readSync(fd, buf, 0, buf.length, 0)
+      const index: BrainIndex = bytesRead > 0
+        ? JSON.parse(buf.slice(0, bytesRead).toString('utf-8'))
+        : { notes: {}, backlinks: {}, tags: {} }
 
-    // Update note entry
-    index.notes[note.id] = {
-      title: note.title,
-      category: note.category,
-      tags: note.tags,
-      links: note.links,
-      updatedAt: note.updatedAt,
-    }
-
-    // Update backlinks
-    for (const linkId of note.links) {
-      if (!index.backlinks[linkId]) index.backlinks[linkId] = []
-      if (!index.backlinks[linkId].includes(note.id)) {
-        index.backlinks[linkId].push(note.id)
+      // Update note entry
+      index.notes[note.id] = {
+        title: note.title,
+        category: note.category,
+        tags: note.tags,
+        links: note.links,
+        updatedAt: note.updatedAt,
       }
-    }
 
-    // Update tag index
-    for (const tag of note.tags) {
-      if (!index.tags[tag]) index.tags[tag] = []
-      if (!index.tags[tag].includes(note.id)) {
-        index.tags[tag].push(note.id)
+      // Update backlinks
+      for (const linkId of note.links) {
+        if (!index.backlinks[linkId]) index.backlinks[linkId] = []
+        if (!index.backlinks[linkId].includes(note.id)) {
+          index.backlinks[linkId].push(note.id)
+        }
       }
-    }
 
-    writeFileSync(this.indexPath, JSON.stringify(index, null, 2))
+      // Update tag index
+      for (const tag of note.tags) {
+        if (!index.tags[tag]) index.tags[tag] = []
+        if (!index.tags[tag].includes(note.id)) {
+          index.tags[tag].push(note.id)
+        }
+      }
+
+      const data = Buffer.from(JSON.stringify(index, null, 2))
+      ftruncateSync(fd, 0)
+      writeSync(fd, data, 0, data.length, 0)
+    } finally {
+      closeSync(fd)
+    }
   }
 
   private removeFromIndex(id: string): void {

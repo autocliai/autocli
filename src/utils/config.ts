@@ -36,8 +36,12 @@ const DEFAULT_CONFIG: AppConfig = {
 export function loadConfig(): AppConfig {
   const configPath = join(platform.configDir, 'config.json')
   if (!existsSync(configPath)) return { ...DEFAULT_CONFIG }
-  const raw = readFileSync(configPath, 'utf-8')
-  return { ...DEFAULT_CONFIG, ...JSON.parse(raw) }
+  try {
+    const raw = readFileSync(configPath, 'utf-8')
+    return { ...DEFAULT_CONFIG, ...JSON.parse(raw) }
+  } catch {
+    return { ...DEFAULT_CONFIG }
+  }
 }
 
 export function saveConfig(config: AppConfig): void {
@@ -67,6 +71,13 @@ export function modelDisplayName(model: string): string {
     return minor ? `${name} ${major}.${minor}` : `${name} ${major}`
   }
   return model
+}
+
+const VALID_PROVIDERS = new Set(['anthropic', 'openai', 'claude-local', 'minimaxi-cn'])
+
+export function resolveProvider(name: string | undefined, fallback: AppConfig['provider']): AppConfig['provider'] {
+  if (name && VALID_PROVIDERS.has(name)) return name as AppConfig['provider']
+  return fallback
 }
 
 export function resolveModel(name: string, fallback: string): string {

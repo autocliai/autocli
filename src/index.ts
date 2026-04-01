@@ -146,7 +146,8 @@ async function runOneShot(prompt: string, workingDir: string, modelFlag?: string
   const { buildGitContext, buildProjectHint } = await import('./git/gitContext.js')
 
   const config = loadConfig()
-  const provider = (providerFlag || config.provider) as 'anthropic' | 'openai' | 'claude-local'
+  const { resolveProvider } = await import('./utils/config.js')
+  const provider = resolveProvider(providerFlag, config.provider)
   if (providerFlag) config.provider = provider
   const apiKey = getApiKey()
 

@@ -219,10 +219,14 @@ export async function readInput(prompt = '> ', history?: string[], commands?: st
     }
 
     rl.on('close', () => {
-      // Ensure vim keypress handler is cleaned up even on unexpected close
+      // Ensure keypress handlers are cleaned up even on unexpected close
       if (vimKeypressHandler) {
         process.stdin.removeListener('keypress', vimKeypressHandler)
         vimKeypressHandler = null
+      }
+      if (wrapKeypressHandler) {
+        process.stdin.removeListener('keypress', wrapKeypressHandler)
+        wrapKeypressHandler = null
       }
       finish(lines.join('\n'))
     })

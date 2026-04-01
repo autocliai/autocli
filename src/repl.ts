@@ -1,4 +1,4 @@
-import { getApiKey, loadConfig, resolveModel, modelDisplayName } from './utils/config.js'
+import { getApiKey, loadConfig, resolveModel, resolveProvider, modelDisplayName } from './utils/config.js'
 import { ToolRegistry } from './tools/registry.js'
 import { TokenCounter } from './engine/tokenCounter.js'
 import { ContextManager } from './engine/contextManager.js'
@@ -82,7 +82,7 @@ export async function startRepl(options: {
   provider?: string
 }): Promise<void> {
   const config = loadConfig()
-  if (options.provider) config.provider = options.provider as 'anthropic' | 'openai' | 'claude-local'
+  if (options.provider) config.provider = resolveProvider(options.provider, config.provider)
   const apiKey = getApiKey()
   const workingDir = options.workingDir || process.cwd()
 
@@ -272,7 +272,7 @@ export async function startRepl(options: {
 
   layout.log('')
   layout.log(theme.bold('  ╭─────────────────────────╮'))
-  layout.log(theme.bold('  │') + theme.info('     autocli v0.1.1  ') + theme.bold('│'))
+  layout.log(theme.bold('  │') + theme.info('     autocli v0.1.1      ') + theme.bold('│'))
   layout.log(theme.bold('  ╰─────────────────────────╯'))
   layout.log('')
   layout.log(`  ${theme.dim('Model:')}   ${modelDisplayName(resolvedModel)}`)

@@ -46,7 +46,7 @@ export function handleVimKey(state: VimState, key: string): { state: VimState; a
       s.cursor = Math.max(0, s.cursor - 1)
       return { state: s, action: 'none' }
     case 'l': // Move right
-      s.cursor = Math.min(s.buffer.length - 1, s.cursor + 1)
+      s.cursor = Math.min(Math.max(0, s.buffer.length - 1), s.cursor + 1)
       return { state: s, action: 'none' }
     case '0': // Start of line
       s.cursor = 0
@@ -58,7 +58,7 @@ export function handleVimKey(state: VimState, key: string): { state: VimState; a
       {
         const rest = s.buffer.slice(s.cursor)
         const match = rest.match(/^\S*\s+/)
-        s.cursor = match ? Math.min(s.buffer.length - 1, s.cursor + match[0].length) : s.buffer.length - 1
+        s.cursor = match ? Math.min(Math.max(0, s.buffer.length - 1), s.cursor + match[0].length) : Math.max(0, s.buffer.length - 1)
       }
       return { state: s, action: 'none' }
     case 'b': // Previous word

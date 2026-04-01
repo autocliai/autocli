@@ -39,31 +39,41 @@ export class HookRunner {
         env,
       })
 
-      // Timeout protection — kill hook if it takes too long
-      const timeout = setTimeout(() => {
-        try { proc.kill('SIGTERM') } catch {}
-        setTimeout(() => { try { proc.kill('SIGKILL') } catch {} }, 500)
-      }, HOOK_TIMEOUT)
+      // Race the process against a timeout so we never hang
+      const timeoutPromise = new Promise<'timeout'>((resolve) =>
+        setTimeout(() => resolve('timeout'), HOOK_TIMEOUT)
+      )
 
       try {
-        const [stdout, stderr] = await Promise.all([
-          new Response(proc.stdout).text(),
-          new Response(proc.stderr).text(),
-        ])
+        const processPromise = (async () => {
+          const [stdout, stderr] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+          ])
+          await proc.exited
+          return { stdout, stderr }
+        })()
 
-        clearTimeout(timeout)
-        await proc.exited
+        const result = await Promise.race([processPromise, timeoutPromise])
 
-        if (stdout.trim()) combinedStdout += (combinedStdout ? '\n' : '') + stdout.trim()
-        if (stderr.trim()) combinedStderr += (combinedStderr ? '\n' : '') + stderr.trim()
+        if (result === 'timeout') {
+          try { proc.kill('SIGTERM') } catch {}
+          setTimeout(() => { try { proc.kill('SIGKILL') } catch {} }, 500)
+          combinedStderr += (combinedStderr ? '\n' : '') + `Hook timed out after ${HOOK_TIMEOUT / 1000}s: ${hook.command}`
+          blocked = true
+          break
+        }
+
+        if (result.stdout.trim()) combinedStdout += (combinedStdout ? '\n' : '') + result.stdout.trim()
+        if (result.stderr.trim()) combinedStderr += (combinedStderr ? '\n' : '') + result.stderr.trim()
 
         if (proc.exitCode !== 0) {
           blocked = true
           break
         }
       } catch {
-        clearTimeout(timeout)
-        combinedStderr += (combinedStderr ? '\n' : '') + `Hook timed out after ${HOOK_TIMEOUT / 1000}s: ${hook.command}`
+        try { proc.kill('SIGKILL') } catch {}
+        combinedStderr += (combinedStderr ? '\n' : '') + `Hook failed: ${hook.command}`
         blocked = true
         break
       }

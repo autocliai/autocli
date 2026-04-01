@@ -198,6 +198,11 @@ export class QueryEngine {
     let currentMessages = [...fitted]
     let continueLoop = true
 
+    const ensureSpinnerStopped = () => {
+      if (spinner.isRunning && !this.config.headless) spinner.stop()
+    }
+
+    try {
     while (continueLoop) {
       continueLoop = false
       loopCount++
@@ -347,10 +352,10 @@ export class QueryEngine {
           })
 
           // Abort the stream if the signal fires
+          let onAbort: (() => void) | undefined
           if (abortSignal) {
-            const onAbort = () => s.abort()
+            onAbort = () => s.abort()
             abortSignal.addEventListener('abort', onAbort, { once: true })
-            s.on('end', () => abortSignal.removeEventListener('abort', onAbort))
           }
 
           s.on('text', (text) => {
@@ -360,7 +365,13 @@ export class QueryEngine {
             this.config.wire?.emit('text', { text })
           })
 
-          return await s.finalMessage()
+          try {
+            return await s.finalMessage()
+          } finally {
+            if (abortSignal && onAbort) {
+              abortSignal.removeEventListener('abort', onAbort)
+            }
+          }
         }, 3, !!this.config.headless)
         stopSpinnerOnce() // In case no text was emitted (pure tool_use response)
       }
@@ -513,7 +524,7 @@ export class QueryEngine {
         }
       }
 
-      // Add assistant response to messages (ensure at least one content block)
+      // Add assistant response to messages (API requires at least one content block)
       if (assistantBlocks.length === 0) {
         assistantBlocks.push({ type: 'text', text: '' })
       }
@@ -537,6 +548,10 @@ export class QueryEngine {
         currentMessages.push({ role: 'user', content: toolResults })
         continueLoop = true
       }
+    }
+
+    } finally {
+      ensureSpinnerStopped()
     }
 
     // Find the last assistant message (may not be the final message if loop hit limit)
@@ -599,14 +614,20 @@ export class BackgroundAgentManager {
   complete(id: string, result: string): void {
     const agent = this.agents.get(id)
     if (agent) {
-      this.agents.set(id, { ...agent, status: 'completed', result } as BackgroundAgent)
+      this.agents.set(id, {
+        id: agent.id, description: agent.description, notified: agent.notified,
+        startedAt: agent.startedAt, status: 'completed', result,
+      })
     }
   }
 
   fail(id: string, error: string): void {
     const agent = this.agents.get(id)
     if (agent) {
-      this.agents.set(id, { ...agent, status: 'failed', error } as BackgroundAgent)
+      this.agents.set(id, {
+        id: agent.id, description: agent.description, notified: agent.notified,
+        startedAt: agent.startedAt, status: 'failed', error,
+      })
     }
   }
 

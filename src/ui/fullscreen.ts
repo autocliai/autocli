@@ -161,12 +161,24 @@ export class FullscreenLayout {
       const code = text.charCodeAt(i)
       if (code === 0x1b) {
         // Skip ANSI escape sequences (don't move visible cursor)
-        if (i + 1 < text.length && text.charCodeAt(i + 1) === 0x5b) {
-          i += 2
-          while (i < text.length && text.charCodeAt(i) < 0x40) i++
-          continue
+        if (i + 1 < text.length) {
+          const next = text.charCodeAt(i + 1)
+          if (next === 0x5b) { // CSI: ESC [ ... <letter>
+            i += 2
+            while (i < text.length && text.charCodeAt(i) < 0x40) i++
+            continue
+          }
+          if (next === 0x5d) { // OSC: ESC ] ... (ST or BEL)
+            i += 2
+            while (i < text.length) {
+              if (text.charCodeAt(i) === 0x07) break // BEL
+              if (text.charCodeAt(i) === 0x1b && i + 1 < text.length && text.charCodeAt(i + 1) === 0x5c) { i++; break } // ST
+              i++
+            }
+            continue
+          }
         }
-        i++ // ESC + single char
+        i++ // ESC + single char (e.g., ESC 7, ESC 8)
         continue
       }
       if (code === 0x0a) { // \n

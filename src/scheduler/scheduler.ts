@@ -12,6 +12,7 @@ export class Scheduler {
   private runTeamFn: (template: TeamTemplate, workingDir: string) => Promise<void>
   private runningTeams = new Set<string>()
   private maxConcurrent = 3
+  private exitHandler: (() => void) | null = null
 
   constructor(
     scheduleStore: ScheduleStore,
@@ -28,13 +29,18 @@ export class Scheduler {
     if (this.running) return
     this.running = true
     this.timer = setInterval(() => this.tick(), 30_000)
-    process.on('exit', () => this.stop())
+    this.exitHandler = () => this.stop()
+    process.on('exit', this.exitHandler)
     this.tick()
   }
 
   stop(): void {
     this.running = false
     if (this.timer) { clearInterval(this.timer); this.timer = null }
+    if (this.exitHandler) {
+      process.removeListener('exit', this.exitHandler)
+      this.exitHandler = null
+    }
   }
 
   isRunning(): boolean {

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlinkSync, openSync, closeSync, writeSync, readSync, ftruncateSync } from 'fs'
 import { join } from 'path'
 import type { Task, TaskStatus } from './types.js'
 
@@ -81,9 +81,19 @@ export class TaskStore {
   }
 
   private nextId(): number {
-    const hwm = existsSync(this.hwmPath) ? Number(readFileSync(this.hwmPath, 'utf-8').trim()) : 0
-    const next = hwm + 1
-    writeFileSync(this.hwmPath, String(next))
-    return next
+    // Atomic read-increment-write using file descriptor to avoid TOCTOU races
+    const fd = openSync(this.hwmPath, 'a+')
+    try {
+      const buf = Buffer.alloc(32)
+      const bytesRead = readSync(fd, buf, 0, 32, 0)
+      const hwm = bytesRead > 0 ? Number(buf.slice(0, bytesRead).toString('utf-8').trim()) || 0 : 0
+      const next = hwm + 1
+      const data = Buffer.from(String(next))
+      ftruncateSync(fd, 0)
+      writeSync(fd, data, 0, data.length, 0)
+      return next
+    } finally {
+      closeSync(fd)
+    }
   }
 }

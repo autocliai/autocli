@@ -68,7 +68,9 @@ export class SessionStore {
     // Fallback: try legacy single JSON format
     const legacyPath = join(this.dir, `${id}.json`)
     if (existsSync(legacyPath)) {
-      return JSON.parse(readFileSync(legacyPath, 'utf-8'))
+      try {
+        return JSON.parse(readFileSync(legacyPath, 'utf-8'))
+      } catch { return undefined }
     }
 
     return undefined

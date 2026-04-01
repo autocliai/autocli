@@ -80,10 +80,13 @@ export const bashTool: ToolDefinition = {
       })
 
       let timedOut = false
+      let timeoutResolve: (() => void) | null = null
+      const timeoutPromise = new Promise<void>((resolve) => { timeoutResolve = resolve })
       const timer = setTimeout(() => {
         timedOut = true
         try { proc.kill('SIGTERM') } catch {}
         setTimeout(() => { try { proc.kill('SIGKILL') } catch {} }, 500)
+        timeoutResolve?.()
       }, timeout)
 
       // Stream stdout incrementally so users see progress
@@ -93,23 +96,25 @@ export const bashTool: ToolDefinition = {
         const reader = proc.stdout.getReader()
         const decoder = new TextDecoder()
         let lineBuf = ''
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          const chunk = decoder.decode(value, { stream: true })
-          stdout += chunk
-          // Stream complete lines via onProgress
-          if (context.onProgress) {
-            lineBuf += chunk
-            const lines = lineBuf.split('\n')
-            lineBuf = lines.pop() || ''
-            for (const line of lines) {
-              if (line && !line.includes(cwdMarker)) {
-                context.onProgress(line)
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            const chunk = decoder.decode(value, { stream: true })
+            stdout += chunk
+            // Stream complete lines via onProgress
+            if (context.onProgress) {
+              lineBuf += chunk
+              const lines = lineBuf.split('\n')
+              lineBuf = lines.pop() || ''
+              for (const line of lines) {
+                if (line && !line.includes(cwdMarker)) {
+                  context.onProgress(line)
+                }
               }
             }
           }
-        }
+        } catch { /* stream closed on kill */ }
         // Flush remaining partial line
         if (context.onProgress && lineBuf && !lineBuf.includes(cwdMarker)) {
           context.onProgress(lineBuf)
@@ -118,20 +123,28 @@ export const bashTool: ToolDefinition = {
       const stderrReader = (async () => {
         const reader = proc.stderr.getReader()
         const decoder = new TextDecoder()
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          stderr += decoder.decode(value, { stream: true })
-        }
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            stderr += decoder.decode(value, { stream: true })
+          }
+        } catch { /* stream closed on kill */ }
       })()
-      await Promise.all([stdoutReader, stderrReader])
+
+      // Race stream reading against timeout
+      await Promise.race([
+        Promise.all([stdoutReader, stderrReader]),
+        timeoutPromise,
+      ])
 
       clearTimeout(timer)
-      const exitCode = await proc.exited
 
       if (timedOut) {
         return { output: `Command timed out after ${timeout}ms`, isError: true }
       }
+
+      const exitCode = await proc.exited
 
       // Extract tracked cwd
       let userOutput = stdout
