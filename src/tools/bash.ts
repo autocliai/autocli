@@ -65,9 +65,11 @@ export const bashTool: ToolDefinition = {
       }
     }
 
+    const cwdMarker = `___AUTOCLI_CWD_${Date.now()}_${Math.random().toString(36).slice(2)}___`
+
     try {
       // Append pwd tracking to capture directory changes
-      const trackingCommand = `${command}\n__exit=$?\necho "___AUTOCLI_CWD___$(pwd)"\nexit $__exit`
+      const trackingCommand = `${command}\n__exit=$?\necho "${cwdMarker}$(pwd)"\nexit $__exit`
 
       // Use setsid so we can kill the entire process group on timeout
       const proc = Bun.spawn(['setsid', 'bash', '-c', trackingCommand], {
@@ -98,7 +100,6 @@ export const bashTool: ToolDefinition = {
 
       // Extract tracked cwd
       let userOutput = stdout
-      const cwdMarker = '___AUTOCLI_CWD___'
       const markerIdx = stdout.lastIndexOf(cwdMarker)
       if (markerIdx !== -1) {
         userOutput = stdout.slice(0, markerIdx)

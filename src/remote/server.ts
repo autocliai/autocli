@@ -88,7 +88,15 @@ export class RemoteServer {
 
           case '/chat': {
             if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 })
-            const body = await req.json() as { sessionId?: string; message: string; workingDir?: string }
+            let body: { sessionId?: string; message: string; workingDir?: string }
+            try {
+              body = await req.json() as typeof body
+            } catch {
+              return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
+            }
+            if (!body.message || typeof body.message !== 'string') {
+              return Response.json({ error: 'Missing required field: message' }, { status: 400 })
+            }
             const sessionId = body.sessionId || crypto.randomUUID().slice(0, 8)
 
             let session = self.sessions.get(sessionId)
@@ -134,7 +142,15 @@ export class RemoteServer {
 
           case '/chat/stream': {
             if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 })
-            const body = await req.json() as { sessionId?: string; message: string; workingDir?: string }
+            let body: { sessionId?: string; message: string; workingDir?: string }
+            try {
+              body = await req.json() as typeof body
+            } catch {
+              return Response.json({ error: 'Invalid JSON body' }, { status: 400 })
+            }
+            if (!body.message || typeof body.message !== 'string') {
+              return Response.json({ error: 'Missing required field: message' }, { status: 400 })
+            }
 
             const encoder = new TextEncoder()
             const stream = new ReadableStream({

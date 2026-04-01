@@ -48,7 +48,7 @@ export class BrainWriter {
       `id: ${note.id}`,
       `title: ${note.title}`,
       `category: ${note.category}`,
-      `tags: [${note.tags.join(', ')}]`,
+      `tags: [${note.tags.map(t => `"${t.replace(/"/g, '\\"')}"`).join(', ')}]`,
       `links: [${note.links.join(', ')}]`,
       `created: ${new Date(note.createdAt).toISOString()}`,
       `updated: ${new Date(note.updatedAt).toISOString()}`,
